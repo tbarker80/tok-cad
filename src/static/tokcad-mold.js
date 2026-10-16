@@ -142,12 +142,14 @@ function decode(result) {
       undercutRegion: typed(body.undercutRegion, Int32Array),
       cavityCore: typed(body.cavityCore, Uint8Array),
     };
-    // Draft as each half of the mold sees it: the half on the −pull side moves the other way,
-    // so its faces are judged against the reversed direction. (A one-sided view would show
-    // that whole half red.)
+    // Draft as the mold sees it. Each half pulls its own way, so a face's slope counts whichever
+    // way it leans; a face that locks the part in (an undercut) counts as sloped the wrong way.
+    // (Judging every face against one direction would show a whole half red, and the halves'
+    // labels are decided by neighbors for walls this close to the pull, so they can't set the sign.)
     const draft = new Float32Array(body.triangles);
     for (let t = 0; t < body.triangles; t++) {
-      draft[t] = decoded.cavityCore[t] === body.labels.minus ? -decoded.draftDeg[t] : decoded.draftDeg[t];
+      const slope = Math.abs(decoded.draftDeg[t]);
+      draft[t] = decoded.undercut[t] ? -slope : slope;
     }
     decoded.draft = draft;
     // per face: the steepest triangle decides whether the face has draft anywhere
@@ -197,6 +199,206 @@ export function findings(result) {
   for (const list of Object.values(out)) list.sort((a, b) => b.area - a.area);
   return out;
 }
+
+// ── "Fix it": add draft with the studio's own Draft feature ────────────────────────────────
+const FIX_DRAFT_DEG = 1.5;        // comfortably above the 1° minimum
+
+/** Up to `limit` vertices of one service face, spread over its triangles. */
+function faceVertices(body, faceId, limit = 48) {
+  const tris = [];
+  for (let t = 0; t < body.triangles; t++) if (body.faceIds[t] === faceId) tris.push(t);
+  const step = Math.max(1, Math.floor(tris.length * 3 / limit));
+  const out = [];
+  for (let k = 0; k < tris.length * 3; k += step) {
+    const i = (tris[Math.floor(k / 3)] * 3 + (k % 3)) * 3;
+    out.push([body.positions[i], body.positions[i + 1], body.positions[i + 2]]);
+  }
+  return out;
+}
+
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+/** How far the points stray from a studio face's surface (its plane, or its cylinder), or
+ *  Infinity for surfaces this can't test. */
+function offSurface(points, sig) {
+  let worst = 0;
+  if (sig.topologyKind === 'planar-face' && sig.p && sig.n) {
+    const len = Math.hypot(...sig.n) || 1;
+    const n = sig.n.map((c) => c / len);
+    for (const q of points) worst = Math.max(worst, Math.abs(dot3(sub3(q, sig.p), n)));
+    return worst;
+  }
+  if (sig.topologyKind === 'cylindrical-face' && sig.a && sig.d && sig.r > 0) {
+    const len = Math.hypot(...sig.d) || 1;
+    const d = sig.d.map((c) => c / len);
+    for (const q of points) {
+      const v = sub3(q, sig.a);
+      const along = dot3(v, d);
+      const radial = Math.hypot(v[0] - along * d[0], v[1] - along * d[1], v[2] - along * d[2]);
+      worst = Math.max(worst, Math.abs(radial - sig.r));
+    }
+    return worst;
+  }
+  return Infinity;
+}
+
+/** The studio's face for each flagged face: the one whose surface the flagged face's own
+ *  vertices lie on. Planes must also face the same way (the two sides of a thin wall share a
+ *  plane only in the limit); for cylinders the radius tells the outside from the bore. When
+ *  two studio faces fit (a surface split in two), the nearest one wins. */
+export function matchFaces(items, result, studioFaces) {
+  const tol = Math.max(result.maxDim * 0.001, 0.005);
+  const out = [];
+  for (const item of items) {
+    const body = result.bodies[item.body];
+    if (!body) continue;
+    const points = faceVertices(body, item.face);
+    if (!points.length) continue;
+    let best = null;
+    for (const face of studioFaces) {
+      const sig = face.sig;
+      if (!face.ref || !sig) continue;
+      if (sig.topologyKind === 'planar-face') {
+        const len = Math.hypot(...sig.n) || 1;
+        if (!item.normal || dot3(item.normal, sig.n) / len < 0.995) continue;
+      }
+      const off = offSurface(points, sig);
+      if (!(off <= tol)) continue;
+      const dist = sig.p && item.centroid ? Math.hypot(...sub3(item.centroid, sig.p)) : 0;
+      if (!best || dist < best.dist) best = { face, dist };
+    }
+    if (best) out.push({ item, face: best.face });
+  }
+  return out;
+}
+
+/** Where the halves meet, measured along the pull: the parting line the service found. */
+function partingHeight(result) {
+  const pull = result.pull.vector;
+  const along = [];
+  for (const body of result.bodies) {
+    for (const q of body.partingLine || []) along.push(q[0] * pull[0] + q[1] * pull[1] + q[2] * pull[2]);
+  }
+  if (along.length) return along.reduce((a, b) => a + b, 0) / along.length;
+  let low = Infinity;                       // no parting line: the face of the part nearest the −pull side
+  for (const body of result.bodies) {
+    for (let i = 0; i < body.positions.length; i += 3) {
+      low = Math.min(low, body.positions[i] * pull[0] + body.positions[i + 1] * pull[1] + body.positions[i + 2] * pull[2]);
+    }
+  }
+  return Number.isFinite(low) ? low : 0;
+}
+
+function perpendicular(n) {
+  const a = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const d = a[0] * n[0] + a[1] * n[1] + a[2] * n[2];
+  const v = [a[0] - d * n[0], a[1] - d * n[1], a[2] - d * n[2]];
+  const len = Math.hypot(...v);
+  return v.map((c) => c / len);
+}
+
+const shortId = () => Math.random().toString(36).slice(2, 10);
+
+/** The typed operations that add draft to the flagged faces: a plane where the mold halves meet,
+ *  then per body one Draft feature for the faces on each side of it. A face above the plane is
+ *  formed by the half that pulls up, so it leans to face up; one below leans to face down. Each
+ *  turns about its line on the plane, so the part keeps its size where the halves meet.
+ *  Returns { operations, matched, missed } or { error }. */
+export function draftOperations(result, items, studioFaces, { flatOnly = false } = {}) {
+  const matches = matchFaces(items, result, studioFaces)
+    .filter(({ face }) => !flatOnly || face.sig.topologyKind === 'planar-face');
+  if (!matches.length) return { error: 'None of these faces could be found in your model to draft.' };
+  const pull = result.pull.vector;
+  const h = partingHeight(result);
+  const datumId = 'tokcad-parting-plane-' + shortId();
+  const operations = [{
+    kind: 'datum.create',
+    input: {
+      id: datumId, name: 'Parting plane', datumKind: 'plane',
+      definition: { mode: 'point-normal', point: pull.map((c) => +(c * h).toFixed(6)), normal: pull, xDirection: perpendicular(pull) },
+    },
+  }];
+  const groups = new Map();                  // body and side -> face references
+  const seen = new Set();
+  for (const { item, face } of matches) {
+    const refKey = face.bodyId + '|' + face.ref.name;
+    if (seen.has(refKey)) continue;          // the service may split a face the studio keeps whole
+    seen.add(refKey);
+    const c = item.centroid;
+    const below = c[0] * pull[0] + c[1] * pull[1] + c[2] * pull[2] < h;
+    const key = face.bodyId + (below ? '|below' : '|above');
+    if (!groups.has(key)) groups.set(key, { bodyId: face.bodyId, below, faceRefs: [] });
+    groups.get(key).faceRefs.push(face.ref);
+  }
+  for (const { bodyId, below, faceRefs } of groups.values()) {
+    operations.push({
+      kind: 'feature.draft',
+      input: {
+        id: 'tokcad-draft-' + shortId(), name: below ? 'Draft for molding (lower half)' : 'Draft for molding',
+        bodyId, neutralPlaneDatumId: datumId, angle: FIX_DRAFT_DEG, faceRefs, flip: below,
+      },
+    });
+  }
+  const round = matches.filter(({ face }) => face.sig.topologyKind !== 'planar-face').length;
+  return { operations, matched: seen.size, round, missed: items.length - matches.length };
+}
+
+async function fixDraft() {
+  if (state.busy || !state.result) return;
+  const doc = studio.document();
+  if (doc?.rootDocument?.kind !== 'part') {
+    state.error = true;
+    state.message = 'Draft can be added to a part you model here. For an imported file, add draft in the CAD program it came from.';
+    render();
+    return;
+  }
+  if (state.sentHash !== studio.contentHash()) {
+    state.error = true;
+    state.message = 'The model has changed since this check. Run the check again first.';
+    render();
+    return;
+  }
+  const items = findings(state.result).noDraft;
+  const built = draftOperations(state.result, items, studio.faces());
+  if (built.error) {
+    state.error = true;
+    state.message = built.error;
+    render();
+    return;
+  }
+  state.busy = true;
+  state.error = false;
+  state.message = `Adding ${FIX_DRAFT_DEG}° of draft to ${plural(built.matched, 'face')}…`;
+  render();
+  let applied = await studio.applyOperations('Add draft for molding', built.operations);
+  let skippedRound = 0;
+  if (applied.error && built.round) {
+    // The modeling kernel can't draft some round faces (whole cylinders): do the flat ones.
+    const flat = draftOperations(state.result, items, studio.faces(), { flatOnly: true });
+    if (!flat.error) {
+      applied = await studio.applyOperations('Add draft for molding', flat.operations);
+      skippedRound = built.round;
+    }
+  }
+  state.busy = false;
+  if (applied.error) {
+    state.error = true;
+    state.message = 'The draft could not be added: ' + applied.error + '.' + (built.round ? ' ' + ROUND_ADVICE : '');
+    render();
+    return;
+  }
+  state.message = '';
+  await run();                                   // check again, so the faces turn green
+  if (!state.error) {
+    state.message = `Added ${FIX_DRAFT_DEG}° of draft. It is the "Draft for molding" feature in your history: edit it or undo it like any other.` +
+      (skippedRound ? ` ${plural(skippedRound, 'round face')} could not be drafted here. ${ROUND_ADVICE}` : '');
+    render();
+  }
+}
+
+const ROUND_ADVICE = 'To slope a round wall, model it with Loft between a circle and a slightly smaller one, ' +
+  'or Revolve a profile whose side leans by a degree or two.';
 
 // ── drawing on the model ───────────────────────────────────────────────────────────────────
 function triangleColor(view, body, t, result) {
@@ -360,6 +562,10 @@ function summary(result) {
       ? `${plural(f.noDraft.length, 'face')} run straight along the opening direction with no draft.`
       : 'Every large face has some draft.'));
     blocks.push(findingList(f.noDraft, 'Add 1° or more to:', 'draft'));
+    if (f.noDraft.length && studio.document()?.rootDocument?.kind === 'part') {
+      blocks.push(el('button', { type: 'button', class: 'tokcad-btn', 'data-mold-fix': 'draft', disabled: state.busy, onclick: fixDraft },
+        `Fix it: add ${FIX_DRAFT_DEG}° of draft`));
+    }
     if (f.lowDraft.length) blocks.push(findingList(f.lowDraft, `${plural(f.lowDraft.length, 'face')} have under 1°:`, 'draft'));
   }
   if (view === 'thickness') {
@@ -459,7 +665,10 @@ function init(tokcadStudio) {
     supports: (process) => process === 'molded',
     run: () => { open(); if (!state.result) run(); },
   };
-  globalThis.TokcadMold = { open, close, run, state: () => state, findings: () => findings(state.result) };
+  globalThis.TokcadMold = {
+    open, close, run, fixDraft, state: () => state, findings: () => findings(state.result),
+    draftOperations: () => draftOperations(state.result, findings(state.result).noDraft, studio.faces()),
+  };
   globalThis.dispatchEvent(new Event('tokcad:checks-ready'));
 }
 

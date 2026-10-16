@@ -25945,6 +25945,34 @@
     scene: () => ({ THREE, partGroup }),
     requestRender: () => requestSceneRender(),   // after adding or changing scene objects
     building: () => latestAppliedRevision < latestRequestedRevision || mode.kind === 'rebuilding',
+    // Faces of the built bodies, each with the reference a feature stores for it (null when the
+    // face has no persistent name) and its geometric signature.
+    faces() {
+      return v6TopologyInventory().filter((item) => item.topologySignature?.kind === 'face').map((item) => {
+        let ref = null;
+        try { ref = v6InteractionTools.cadUiStoredTopologyReference(item); } catch { /* no persistent name */ }
+        return { bodyId: item.owner.id, ref, sig: deepCopy(item.topologySignature), geometry: item.expectedGeometry };
+      });
+    },
+    // Apply typed operations as one undoable step, as the studio's own dialogs do: check the
+    // result with the kernel first, so a failing feature never lands in the history.
+    async applyOperations(label, operations) {
+      try {
+        const sourceRevision = commandRevision;
+        const preview = agentTools.applyCadTransaction(doc, {
+          transactionId: 'tokcad-preview-' + newId(), label, expectedRevision: commandRevision, atomic: true,
+          operations, metadata: { actor: 'human', clientLabel: 'TOK CAD' },
+        }).project;
+        const validation = await kernelCall('validate-v5', documentRevision, { document: preview });
+        if (commandRevision !== sourceRevision) return { error: 'The model changed. Try again.' };
+        if (validation.errors?.length) return { error: validation.errors[0].message };
+        const blocked = commitHumanOperations(label, operations);
+        if (blocked && !blocked.project) return { error: String(blocked.message || blocked.error || 'The change was blocked.') };
+        return { ok: true };
+      } catch (error) {
+        return { error: String(error?.message || error) };
+      }
+    },
     partExtension(key) {
       const part = tokcadRootPart(doc);
       return part?.extensions?.tokcad?.[key] ?? null;

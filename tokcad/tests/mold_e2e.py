@@ -187,6 +187,52 @@ with sync_playwright() as p:
         if SHOTS:
             pg.screenshot(path=os.path.join(SHOTS, 'mold_housing_undercut.png'))
 
+    # ── "Fix it: add draft" on parts modeled here ─────────────────────────────────────────
+    def new_shape(label):
+        pg.click('#tokcad-start-open')
+        pg.wait_for_selector('.tokcad-start', timeout=30000)
+        pg.click('text=Start from scratch')
+        pg.click(f'.tokcad-shape:has-text("{label}")')
+        before = pg.evaluate('() => globalThis.TokcadStudio.contentHash()')
+        pg.click('.tokcad-form button[type=submit]')
+        pg.wait_for_function('h => globalThis.TokcadStudio.contentHash() !== h && globalThis.TokcadStudio.bodyMeshes().size > 0'
+                             ' && !globalThis.TokcadStudio.building()', arg=before, timeout=90000)
+        pg.wait_for_timeout(1000)
+
+    def fix_draft():
+        pg.click('#tokcad-mold [data-mold-view="draft"]')
+        pg.click('#tokcad-mold [data-mold-fix="draft"]')
+        pg.wait_for_function('() => !globalThis.TokcadMold.state().busy && /^Added|could not/.test(globalThis.TokcadMold.state().message)',
+                             timeout=180000)
+        return pg.evaluate('() => globalThis.TokcadMold.state().message')
+
+    def features():
+        return [f['name'] for f in pg.evaluate('() => globalThis.TokcadStudio.document().partDefinitions[0].features')]
+
+    check(not pg.is_visible('#tokcad-mold [data-mold-fix]'), 'no "Fix it" button for an imported part (it opens as an assembly)')
+    new_shape('Block')
+    r = run_check(pg)
+    f = pg.evaluate('() => globalThis.TokcadMold.findings()')
+    check(not r['error'] and len(f['noDraft']) == 4, f'block: its 4 side walls have no draft ({len(f["noDraft"])})')
+    msg = fix_draft()
+    f = pg.evaluate('() => globalThis.TokcadMold.findings()')
+    check(msg.startswith('Added') and 'Draft for molding' in features(), f'block: "Fix it" adds a Draft feature ({features()})')
+    check(len(f['noDraft']) == 0 and len(f['lowDraft']) == 0, f'block: after the fix no face lacks draft ({len(f["noDraft"])}, {len(f["lowDraft"])})')
+    if SHOTS:
+        pg.screenshot(path=os.path.join(SHOTS, 'mold_block_fixed.png'))
+    pg.keyboard.press('Control+z')
+    pg.wait_for_function('() => !globalThis.TokcadStudio.document().partDefinitions[0].features.some((f) => f.type === "draft")', timeout=30000)
+    check(True, 'block: the fix undoes like any other change')
+
+    new_shape('Plate with holes')
+    run_check(pg)
+    f = pg.evaluate('() => globalThis.TokcadMold.findings()')
+    msg = fix_draft()
+    check(msg.startswith('Added') and 'round face' in msg and 'Loft' in msg,
+          f'plate: flat walls drafted, the round holes explained ({msg[:120]})')
+    f2 = pg.evaluate('() => globalThis.TokcadMold.findings()')
+    check(len(f2['noDraft']) < len(f['noDraft']), f'plate: fewer faces without draft ({len(f["noDraft"])} -> {len(f2["noDraft"])})')
+
     # ── the coach offers the check for molded parts only ─────────────────────────────────
     supports = pg.evaluate("() => [globalThis.TokcadChecks.supports('molded'), globalThis.TokcadChecks.supports('printed')]")
     check(supports == [True, False], f'the coach offers the molding check for molded parts only ({supports})')
