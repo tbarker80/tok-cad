@@ -9252,6 +9252,7 @@
   // Shared post-change pipeline: prune dead selection, persist, re-render,
   // rebuild. Used by commit() and replaceDocument().
   function afterDocumentChange(recoveryLabel = null) {
+    tokcadEmit('change');                     // TOKCAD: start screen, coach, checks
     lastInspection = null;
     resetAgentFlightRecorderForProject();
     renderAgentFlightRecorder();
@@ -14546,6 +14547,7 @@
     }
     // Keep the translucent draft above the rebuilt committed body.
     for (const preview of draftPreviews) partGroup.add(preview);
+    tokcadEmit('meshes');                     // TOKCAD: rebuilt geometry is in bodyMeshes
   }
 
   function boundsPair(bounds) {
@@ -25899,4 +25901,57 @@
       true,
     );
   }
+  // ── TOKCAD: hooks for TOK CAD's start screen, coach and process checks ─────────────
+  // Thin wrappers over this closure's own functions, so TOK CAD's modules (tokcad-*.js)
+  // never duplicate studio logic. Events: 'change' (document committed) and 'meshes'
+  // (kernel geometry rebuilt). Listeners live on globalThis because the studio emits
+  // during start-up, before execution reaches this block.
+  function tokcadEmit(kind) {
+    for (const listener of globalThis.__tokcadListeners || []) {
+      try { listener(kind); } catch (error) { console.error('TOK CAD listener failed', error); }
+    }
+  }
+  function tokcadRootPart(document) {
+    const partId = document?.rootDocument?.kind === 'part' ? document.rootDocument.partId : null;
+    return (document?.partDefinitions || []).find((part) => part.id === partId) || null;
+  }
+  globalThis.TokcadStudio = Object.freeze({
+    version: 1,
+    on(listener) {
+      (globalThis.__tokcadListeners ||= []).push(listener);
+      return () => {
+        globalThis.__tokcadListeners = globalThis.__tokcadListeners.filter((l) => l !== listener);
+      };
+    },
+    document: () => structuredClone(doc),
+    revision: () => commandRevision,
+    hasContent: () => documentHasContent(),
+    openTemplate: (template) => openTemplateNow(template),
+    startBlank: () => startBlankProject(),
+    startSketch: () => startSketchFromRibbon(),
+    openTemplateLibrary: () => openTemplateLibrary(),
+    openFile(file) {
+      const input = $('bw-open-file');
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change'));
+    },
+    bodyMeshes: () => new Map(bodyMeshes),
+    scene: () => ({ THREE, partGroup }),
+    partExtension(key) {
+      const part = tokcadRootPart(doc);
+      return part?.extensions?.tokcad?.[key] ?? null;
+    },
+    setPartExtension(key, value, label = 'Update design notes') {
+      if (!tokcadRootPart(doc)) return false;
+      commit(label, () => {
+        const part = tokcadRootPart(doc);
+        part.extensions = { ...(part.extensions || {}), tokcad: { ...(part.extensions?.tokcad || {}), [key]: value } };
+      });
+      return true;
+    },
+    say: (message) => say(message),
+  });
+  globalThis.dispatchEvent(new Event('tokcad:studio-ready'));
 })();

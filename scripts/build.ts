@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { renderPartModeAboutHtml } from '../src/about.js';
 import { buildPartModeHelpManifest, renderPartModeHelpHtml } from '../src/help.js';
 import {
-  aboutHtml, brandAccountHtml, brandHtml, BRANDED_ASSETS, brandScript, COOKIE_BANNER_TEXT, cookiesPage,
+  aboutHtml, brandAccountHtml, brandHtml, BRANDED_ASSETS, brandScript, COOKIE_BANNER_TEXT, cookiesPage, studioExtras,
   markSvg, privacyPage, type BrandContext,
 } from '../src/tokcad-brand.js';
 
@@ -69,6 +69,9 @@ const STATIC_FILES = Object.freeze([
   'partmode-mark.svg',
   'privacy.css',
   'privacy.js',
+  'tokcad.css',                  // TOKCAD: start screen and coach (loaded by branded builds)
+  'tokcad-primitives.js',
+  'tokcad-start.js',
   'studio-agent-service.js',
   'studio-addin-api.js',
   'studio-advanced-fillet.js',
@@ -255,7 +258,7 @@ html = html.replace(
   '</body>',
   `${privacyBanner}\n    <script src="/assets/${assetVersion}/privacy.js" defer></script>\n  </body>`,
 );
-writeFileSync(resolve(distRoot, 'index.html'), withBase(BRAND ? brandHtml(html, brand) : html));
+writeFileSync(resolve(distRoot, 'index.html'), withBase(BRAND ? studioExtras(brandHtml(html, brand), brand) : html));
 
 const helpManifest = buildPartModeHelpManifest({
   version: productVersion,

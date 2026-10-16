@@ -56,6 +56,16 @@ export function brandHtml(text: string, ctx: BrandContext): string {
     .replaceAll(`href="${ctx.repoUrl}"`, `href="${ctx.sourceUrl}"`);
 }
 
+/** The studio page's TOK CAD modules: the start screen (and later the coach and checks). */
+export function studioExtras(html: string, ctx: BrandContext): string {
+  const asset = (name: string) => `/assets/${ctx.assetVersion}/${name}`;
+  return html
+    .replace('</head>', `    <link rel="stylesheet" href="${asset('tokcad.css')}" />
+  </head>`)
+    .replace('</body>', `    <script type="module" src="${asset('tokcad-start.js')}"></script>
+  </body>`);
+}
+
 /** The account page without the options TOK CAD does not offer: Google sign-in and
  * server-headless agent projects. account.js copes with the missing elements. */
 export function brandAccountHtml(text: string, ctx: BrandContext): string {

@@ -73,3 +73,16 @@ Upstream's checks run against the plain build, where none of this applies.
   the app, with its inline scripts allowed by hash (`studioCspFor` in `src/server.ts`).
 - Backup: scheduled task `TOK-CAD-Backup` runs `tokcad\scripts\backup.mjs` nightly into
   `D:\apps\tokcad-backups\<date>` (SQLite `VACUUM INTO`), keeping 14 days.
+
+## Start screen (branded builds)
+
+`src/static/tokcad-start.js` replaces upstream's first-visit welcome with TOK CAD's start screen,
+shown for every new, empty part (and from "New part…" in the status bar) unless the user ticks
+"Don't show this": drop or browse a STEP / DXF / project file (STEP imports are followed by a
+"what next?" card), start from scratch (a sketch on the ground plane, or a primitive), or start
+from an example. Primitives (`tokcad-primitives.js`) are generated templates: named parameters
+plus ordinary sketch features, so they stay editable. Both act only through
+`globalThis.TokcadStudio`, a small hook at the end of `src/static/studio.js`, which emits
+`change` (document committed) and `meshes` (kernel rebuild) events. Sketches start on the
+ground plane only: the studio's sketch entry offers just the base plane for an empty part.
+Test: `python tokcad/tests/start_screen_e2e.py`.
