@@ -212,10 +212,14 @@ function stepBody(step, model, panelState, doc) {
     body.push(el('div', { class: 'tokcad-actions' },
       el('button', { type: 'button', class: 'tokcad-btn', onclick: run('measure') }, 'Measure'),
       el('button', { type: 'button', class: 'tokcad-btn', onclick: run('properties') }, 'Weight & volume'),
-      globalThis.TokcadChecks
-        ? el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', onclick: () => { setPrefs(doc, { checked: true }); globalThis.TokcadChecks.run(); render(); } },
-          'Check for ' + (PROCESSES[process]?.label.toLowerCase() || 'manufacturing'))
+      globalThis.TokcadChecks?.supports?.(process)
+        ? el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', 'data-coach-check': '',
+          onclick: () => { setPrefs(doc, { checked: true }); globalThis.TokcadChecks.run(); render(); } },
+          'Check for molding')
         : null));
+    if (process === 'molded' && !globalThis.TokcadChecks) {
+      body.push(el('p', { class: 'tokcad-hint' }, 'The molding check is loading…'));
+    }
   }
   if (step.id === 'output') {
     const exp = (id) => () => { document.getElementById(id)?.click(); setPrefs(doc, { exported: true }); render(); };
@@ -277,6 +281,7 @@ function init(tokcadStudio) {
   }
   studio.on(() => render());
   globalThis.addEventListener('tokcad:mode', () => render());
+  globalThis.addEventListener('tokcad:checks-ready', () => render());
   globalThis.TokcadCoach = { render, state: () => lastState };
   render();
 }

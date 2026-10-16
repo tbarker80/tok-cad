@@ -74,6 +74,7 @@ const STATIC_FILES = Object.freeze([
   'tokcad-start.js',
   'tokcad-coach.js',
   'tokcad-mode.js',
+  'tokcad-mold.js',
   'studio-agent-service.js',
   'studio-addin-api.js',
   'studio-advanced-fillet.js',
@@ -206,7 +207,7 @@ const brand: BrandContext = {
   operator: 'Tokeena Engineering',
   contactUrl: 'https://tok-eng.com',
   assetVersion,
-  effective: '15 October 2026',
+  effective: '16 October 2026',
 };
 if (BRAND && !/^[0-9a-f]{40}$/.test(exactReleaseSha)) {
   throw new Error('A TOK CAD build needs a committed release: its source link names the exact commit.');
@@ -649,6 +650,7 @@ const runtimeModulePaths = Object.freeze([
   'relay-hub.js',
   'server.js',
   'tokcad-accounts.js',          // TOKCAD: verified email
+  'tokcad-mold.js',              // TOKCAD: molding check relay
   'ux-navigation-contract.js',
   'headless/agent-host.js',
   'headless/kernel-host.js',

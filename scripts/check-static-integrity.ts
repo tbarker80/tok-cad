@@ -32,6 +32,7 @@ const EXPECTED_RUNTIME_MODULES = Object.freeze([
   'relay-hub.js',
   'server.js',
   'tokcad-accounts.js',          // TOKCAD
+  'tokcad-mold.js',              // TOKCAD
   'ux-navigation-contract.js',
   'headless/agent-host.js',
   'headless/kernel-host.js',

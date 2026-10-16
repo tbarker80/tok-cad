@@ -65,6 +65,7 @@ export function studioExtras(html: string, ctx: BrandContext): string {
     .replace('</body>', `    <script type="module" src="${asset('tokcad-start.js')}"></script>
     <script type="module" src="${asset('tokcad-coach.js')}"></script>
     <script type="module" src="${asset('tokcad-mode.js')}"></script>
+    <script type="module" src="${asset('tokcad-mold.js')}"></script>
   </body>`);
 }
 
@@ -155,7 +156,7 @@ export function aboutHtml(ctx: BrandContext): string {
 export function privacyMain(ctx: BrandContext, cookieName: string): string {
   return `      <h1>Privacy</h1>
       <p class="updated">Effective ${ctx.effective}.</p>
-      <p>${ctx.name} is browser CAD. You can model without an account; projects you model stay in your browser's storage on your device unless you download them. This page says what ${ctx.operator}, which runs ${ctx.name} at <code>${ctx.publicUrl.replace(/^https?:\/\//, '')}</code>, stores and why.</p>
+      <p>${ctx.name} is browser CAD. You can model without an account; projects you model stay in your browser's storage on your device unless you download them or send one for a molding check. This page says what ${ctx.operator}, which runs ${ctx.name} at <code>${ctx.publicUrl.replace(/^https?:\/\//, '')}</code>, stores and why.</p>
       <h2>Who is responsible</h2>
       <p>${ctx.operator}. Contact us through <a href="${ctx.contactUrl}">${ctx.contactUrl.replace(/^https?:\/\//, '')}</a> for any question or request about your data.</p>
       <h2>Accounts</h2>
@@ -163,6 +164,8 @@ export function privacyMain(ctx: BrandContext, cookieName: string): string {
       <p>Account email is sent through Google's Gmail service from ${ctx.operator}'s address, so Google processes those messages under <a href="https://policies.google.com/privacy">Google's privacy policy</a>.</p>
       <h2>Agent keys and the agent relay</h2>
       <p>Signed-in users can create keys that let an AI agent work on a project open in their browser, after approving it there. For each key we store its label, access level, and creation, last-use, expiry and revocation times. Commands and results between the agent and your browser pass through our server in memory only, over HTTPS; they are not stored. ${ctx.name} does not run agent projects on the server.</p>
+      <h2>The molding check</h2>
+      <p>When a signed-in user runs the molding check, the part's 3D geometry (as a STEP file, with the names in it) is sent to our server and analyzed there by ${ctx.operator}'s own molding-analysis service on the same machine. The file and its results are stored with your account's id for 7 days, so the check can be run again without sending the part each time, and are then deleted. They are not shared, and not used for anything else.</p>
       <h2>Cookies and browser storage</h2>
       <p>${ctx.name} uses essential first-party cookies only: one remembering your cookie choice and, if you sign in, the session cookie <code>${cookieName}</code>. Your browser's local storage and IndexedDB keep your projects, recovery history and preferences on your device. There are no analytics, advertising or third-party trackers. See <a href="/cookies">cookie details and settings</a>.</p>
       <h2>Server logs</h2>

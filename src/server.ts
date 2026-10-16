@@ -28,6 +28,9 @@ import { handleMcpRequest, MCP_PROTOCOL_VERSION } from './mcp.js';
 import {
   alreadyRegisteredMessage, Mailer, normalizeEmail, resetMessage, TokcadAccounts, verifyMessage,
 } from './tokcad-accounts.js';
+import {
+  isMoldSessionId, MOLD_ANALYSES_PER_HOUR, MOLD_STEP_LIMIT, MOLD_UPLOADS_PER_HOUR, MoldService, MoldServiceError,
+} from './tokcad-mold.js';
 import { RelayError, RelayHub, type AgentIdentity } from './relay-hub.js';
 
 export interface ReleaseFileEntry {
@@ -71,7 +74,7 @@ export interface RunningPartModeServer {
 
 interface ApiContext {
   store: AccountStore;
-  tokcad: { accounts: TokcadAccounts; mailer: Mailer };   // TOKCAD: verified email
+  tokcad: { accounts: TokcadAccounts; mailer: Mailer; mold: MoldService };   // TOKCAD: verified email, molding check
   relay: RelayHub;
   headless: HeadlessSessionManager;
   release: ReleaseManifest;
@@ -656,6 +659,98 @@ function appRedirect(res: ServerResponse, path: string, cookie?: string): void {
   res.end();
 }
 
+// ── TOKCAD: the molding check (see tokcad-mold.ts) ──────────────────────────────────────────
+const MOLD_WINDOW_MS = 60 * 60 * 1000;
+
+async function readStepBody(req: IncomingMessage): Promise<Buffer> {
+  const contentType = req.headers['content-type'];
+  if (typeof contentType !== 'string' || !/^(application\/octet-stream|application\/step|model\/step)(?:\s*;|$)/i.test(contentType)) {
+    throw new HttpError(415, 'STEP_REQUIRED', 'Send the part as a STEP file.');
+  }
+  const tooLarge = () => new HttpError(413, 'PAYLOAD_TOO_LARGE', 'The part is too large for the molding check (50 MB at most).');
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > MOLD_STEP_LIMIT) throw tooLarge();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const rawChunk of req) {
+    const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+    bytes += chunk.byteLength;
+    if (bytes > MOLD_STEP_LIMIT) throw tooLarge();
+    chunks.push(chunk);
+  }
+  if (bytes === 0) throw new HttpError(400, 'STEP_REQUIRED', 'Send the part as a STEP file.');
+  return Buffer.concat(chunks);
+}
+
+/** Signed in, with a verified email (the check stores the part for 7 days). */
+function requireMoldUser(req: IncomingMessage, context: ApiContext): string {
+  exactOriginRequired(req, context.publicOrigin);
+  const authenticated = webSession(req, context.store);
+  if (!authenticated) {
+    throw new HttpError(401, 'AUTHENTICATION_REQUIRED', 'Create a free account (or sign in) to run the molding check.');
+  }
+  requireCsrf(req, authenticated.session);
+  const accountId = authenticated.session.account.id;
+  if (emailVerification() && !context.tokcad.accounts.isVerified(accountId)) {
+    throw new HttpError(403, 'EMAIL_UNVERIFIED', 'Verify your email address to run the molding check.');
+  }
+  return accountId;
+}
+
+async function handleTokcadMoldApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  context: ApiContext,
+): Promise<void> {
+  const mold = context.tokcad.mold;
+  try {
+    if (path === '/api/v1/mold/status') {
+      requireMethod(req, ['GET']);
+      const signedIn = webSession(req, context.store);
+      const verified = signedIn !== null
+        && (!emailVerification() || context.tokcad.accounts.isVerified(signedIn.session.account.id));
+      sendJson(req, res, 200, { available: mold.enabled, signedIn: signedIn !== null, verified });
+      return;
+    }
+    if (path === '/api/v1/mold/sessions') {
+      requireMethod(req, ['POST']);
+      const accountId = requireMoldUser(req, context);
+      if (!context.authLimiter.take(`mold-upload:${accountId}`, MOLD_UPLOADS_PER_HOUR, MOLD_WINDOW_MS)) {
+        throw new HttpError(429, 'RATE_LIMITED', 'That is a lot of molding checks for one hour. Try again later.');
+      }
+      const step = await readStepBody(req);
+      sendJson(req, res, 200, await mold.createSession(accountId, step));
+      return;
+    }
+    const match = /^\/api\/v1\/mold\/sessions\/([^/]+)\/analyze$/.exec(path);
+    if (match) {
+      requireMethod(req, ['POST']);
+      const accountId = requireMoldUser(req, context);
+      if (!isMoldSessionId(match[1]!)) throw new HttpError(404, 'NOT_FOUND', 'Unknown or expired molding check.');
+      const body = objectBody(await readJson(req, API_BODY_LIMIT));
+      let pull: [number, number, number] | null = null;
+      if (body.pull !== undefined && body.pull !== null) {
+        const p = body.pull;
+        if (!Array.isArray(p) || p.length !== 3 || !p.every((c) => typeof c === 'number' && Number.isFinite(c))
+            || p.every((c) => Math.abs(c as number) < 1e-9)) {
+          throw new HttpError(400, 'PULL_INVALID', 'The pull direction must be [x, y, z].');
+        }
+        pull = p as [number, number, number];
+      }
+      if (!context.authLimiter.take(`mold-analyze:${accountId}`, MOLD_ANALYSES_PER_HOUR, MOLD_WINDOW_MS)) {
+        throw new HttpError(429, 'RATE_LIMITED', 'That is a lot of molding checks for one hour. Try again later.');
+      }
+      sendJson(req, res, 200, await mold.analyze(accountId, match[1]!, pull));
+      return;
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'Not found.');
+  } catch (error) {
+    if (error instanceof MoldServiceError) throw new HttpError(error.status, 'MOLD_CHECK_FAILED', error.message);
+    throw error;
+  }
+}
+
 async function handleTokcadAccountApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -753,6 +848,7 @@ async function handleAccountApi(
 ): Promise<void> {
   const { store, relay } = context;
 
+  if (path.startsWith('/api/v1/mold/')) return handleTokcadMoldApi(req, res, path, context);   // TOKCAD
   if (await handleTokcadAccountApi(req, res, path, context)) return;   // TOKCAD
 
   if (path === '/api/v1/account' && req.method === 'GET') {
@@ -1437,7 +1533,7 @@ export async function startPartModeServer(
     help,
     googleAuth,
     authLimiter: new FixedWindowLimiter(),
-    tokcad: { accounts: tokcadAccounts, mailer: new Mailer(stateDir) },
+    tokcad: { accounts: tokcadAccounts, mailer: new Mailer(stateDir), mold: new MoldService(stateDir) },
     ...(publicOrigin ? { publicOrigin } : {}),
   };
   const handler = requestHandler(

@@ -147,3 +147,29 @@ body:not(.tokcad-beginner) .tokcad-beginner-only { display: none !important; }
 #tokcad-mode-toggle {
   background: none; border: 0; color: #85bcf4; font: inherit; cursor: pointer; text-decoration: underline; padding: 0 8px;
 }
+
+/* ── Molding check (below the coach) ───────────────────────────────────────────────────── */
+.tokcad-mold header { padding-left: 10px; }
+.tokcad-mold header b { flex: 1; padding: 9px 0; }
+.tokcad-mold-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.tokcad-mold-body p, .tokcad-mold-body ul { margin: 0; color: #c9d1db; }
+.tokcad-mold-body .tokcad-btn { margin-top: 0; padding: 5px 12px; font-size: 12px; }
+.tokcad-mold-body .tokcad-error, .tokcad-mold-body .tokcad-note { font-size: 13px; }
+.tokcad-mold-body .tokcad-error a { color: #9fc8ff; }
+.tokcad-mold-pull { display: flex; align-items: center; gap: 8px; color: #aeb7c3; }
+.tokcad-mold-pull select {
+  flex: 1; padding: 4px 6px; border-radius: 5px; border: 1px solid #3a4655; background: #0f141a; color: #e9edf2; font: inherit;
+}
+.tokcad-mold-views { display: flex; flex-wrap: wrap; gap: 4px; }
+.tokcad-mold-tab {
+  padding: 4px 8px; border-radius: 5px; border: 1px solid #3a4655; background: #1a222c; color: #aeb7c3;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.tokcad-mold-tab.is-on { background: #a9d1ff; border-color: #a9d1ff; color: #07121d; font-weight: 600; }
+.tokcad-legend { list-style: none; padding: 0 !important; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.tokcad-legend li { display: flex; align-items: center; gap: 6px; }
+.tokcad-swatch { flex: 0 0 12px; height: 12px; border-radius: 3px; }
+.tokcad-finding ul { padding-left: 18px; }
+#tokcad-mold-open {
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; padding: 0 8px;
+}

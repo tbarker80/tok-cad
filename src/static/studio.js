@@ -25927,6 +25927,8 @@
     },
     document: () => structuredClone(doc),
     revision: () => commandRevision,
+    // Identity of the model's content; unlike revision() it also changes when a file is opened.
+    contentHash: () => v5RuntimeTools.studioV5CanonicalHash(doc),
     hasContent: () => documentHasContent(),
     openTemplate: (template) => openTemplateNow(template),
     startBlank: () => startBlankProject(),
@@ -25941,6 +25943,8 @@
     },
     bodyMeshes: () => new Map(bodyMeshes),
     scene: () => ({ THREE, partGroup }),
+    requestRender: () => requestSceneRender(),   // after adding or changing scene objects
+    building: () => latestAppliedRevision < latestRequestedRevision || mode.kind === 'rebuilding',
     partExtension(key) {
       const part = tokcadRootPart(doc);
       return part?.extensions?.tokcad?.[key] ?? null;
@@ -25954,6 +25958,31 @@
       return true;
     },
     say: (message) => say(message),
+    // Every visible body as a STEP file (not just the selected one): { blob } or { error }.
+    async exportStepBlob() {
+      // A part that is still being built (just opened, or just edited) would go out with only
+      // the bodies built so far: wait for the rebuild to finish first.
+      for (const started = Date.now(); latestAppliedRevision < latestRequestedRevision || mode.kind === 'rebuilding';) {
+        if (Date.now() - started > 180_000) return { error: 'The part is still being built. Try again in a moment.' };
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      const hasBodies = v5RuntimeTools.isStudioV5Project(doc) && doc.rootDocument?.kind === 'assembly'
+        ? lastBodyResults.some((body) => body.visible !== false && !body.suppressed && body.geometry?.valid)
+        : Boolean(partFeatures().length);
+      if (!hasBodies) return { error: 'Add a feature or open a part first.' };
+      try {
+        const bodyIds = v5RuntimeTools.isStudioV5Project(doc)
+          ? lastBodyResults.filter((body) => body.visible !== false && !body.suppressed && body.geometry?.valid).map((body) => body.bodyId)
+          : selectedExportBodyIds();
+        const response = await kernelCall(cadExportKernelKind('step'), documentRevision, { bodyIds });
+        if (!response.blob || response.errors?.length) {
+          return { error: 'A feature is failing (marked red). Fix or delete it first.' };
+        }
+        return { blob: response.blob };
+      } catch (error) {
+        return { error: 'The part could not be exported: ' + String(error?.message || error) };
+      }
+    },
   });
   globalThis.dispatchEvent(new Event('tokcad:studio-ready'));
 })();
