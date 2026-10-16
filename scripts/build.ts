@@ -25,6 +25,30 @@ const staticRoot = resolve(sourceRoot, 'static');
 const distRoot = resolve(repositoryRoot, 'dist');
 const productVersion = '8.0.0';
 
+// TOKCAD: the app can be served under a path prefix (TOKCAD_BASE_PATH, e.g. "/cad") behind a
+// reverse proxy that strips it, so the server's own routes stay unchanged. Every URL the build
+// emits for the browser gets the prefix; the server reads it back from release.json.
+const BASE_PATH = (() => {
+  const raw = (process.env.TOKCAD_BASE_PATH ?? '').trim().replace(/\/+$/, '');
+  if (raw && !/^\/[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/.test(raw)) {
+    throw new Error(`TOKCAD_BASE_PATH must look like "/cad", not ${JSON.stringify(raw)}.`);
+  }
+  return raw;
+})();
+// Root-absolute app URLs in quotes, attributes and CSS url(): "/api/...", '/assets/...', ...
+// Not the API sub-paths account.js passes to apiRequest(), which are relative to its API_ROOT.
+const APP_URL = /(?<!apiRequest\()(?<!currentTarget, )(["'`(])\/(?=(?:api|assets|help|account|about|privacy|cookies|auth|mcp)(?:[\/?#"'`)]))/g;
+// Attribute links to the app's root: href="/" and href="/#..."
+const ROOT_LINK = /((?:href|action)=["'])\/(?=["'#?])/g;
+
+function withBase(text: string): string {
+  if (!BASE_PATH) return text;
+  return text
+    .replace(APP_URL, `$1${BASE_PATH}/`)
+    .replace(ROOT_LINK, `$1${BASE_PATH}/`)
+    .replaceAll('Path=/;', `Path=${BASE_PATH};`);
+}
+
 const STATIC_FILES = Object.freeze([
   'account.css',
   'account.js',
@@ -168,7 +192,7 @@ for (const asset of sourceAssets) {
   let output = asset.content;
   if (/\.(?:css|js|svg|txt)$/.test(asset.path)) {
     output = Buffer.from(
-      asset.content.toString('utf8').replaceAll('/static/', `/assets/${assetVersion}/`),
+      withBase(asset.content.toString('utf8').replaceAll('/static/', `/assets/${assetVersion}/`)),
     );
   }
   writeFileSync(destination, output);
@@ -204,20 +228,20 @@ html = html.replace(
   '</body>',
   `${privacyBanner}\n    <script src="/assets/${assetVersion}/privacy.js" defer></script>\n  </body>`,
 );
-writeFileSync(resolve(distRoot, 'index.html'), html);
+writeFileSync(resolve(distRoot, 'index.html'), withBase(html));
 
 const helpManifest = buildPartModeHelpManifest({
   version: productVersion,
   releaseSha: exactReleaseSha,
   readSource: (sourcePath) => readFileSync(resolve(repositoryRoot, sourcePath), 'utf8'),
 });
-writeFileSync(resolve(distRoot, 'help.html'), renderPartModeHelpHtml(helpManifest, { assetVersion }));
+writeFileSync(resolve(distRoot, 'help.html'), withBase(renderPartModeHelpHtml(helpManifest, { assetVersion })));
 writeFileSync(resolve(distRoot, 'help-resources.json'), `${JSON.stringify(helpManifest, null, 2)}\n`);
-writeFileSync(resolve(distRoot, 'about.html'), renderPartModeAboutHtml({
+writeFileSync(resolve(distRoot, 'about.html'), withBase(renderPartModeAboutHtml({
   assetVersion,
   releaseSha: exactReleaseSha,
   version: productVersion,
-}));
+})));
 
 const accountHtml = `<!doctype html>
 <html lang="en">
@@ -381,7 +405,7 @@ const accountHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'account.html'), accountHtml);
+writeFileSync(resolve(distRoot, 'account.html'), withBase(accountHtml));
 
 const privacyHtml = `<!doctype html>
 <html lang="en">
@@ -444,7 +468,7 @@ const privacyHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'privacy.html'), privacyHtml);
+writeFileSync(resolve(distRoot, 'privacy.html'), withBase(privacyHtml));
 
 const cookiesHtml = `<!doctype html>
 <html lang="en">
@@ -536,7 +560,7 @@ const cookiesHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'cookies.html'), cookiesHtml);
+writeFileSync(resolve(distRoot, 'cookies.html'), withBase(cookiesHtml));
 
 // Keep the executable Node control plane as an exact allowlist. Every module
 // copied into the release is also bound by bytes and SHA-256 in release.json.
@@ -583,6 +607,7 @@ const release = {
   version: productVersion,
   releaseSha: exactReleaseSha,
   assetVersion,
+  basePath: BASE_PATH,
   studioSourceSha256: sha256(studioSource),
   help: {
     schema: helpManifest.schema,

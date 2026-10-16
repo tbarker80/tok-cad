@@ -38,6 +38,7 @@ export interface ReleaseManifest {
   version: string;
   releaseSha: string;
   assetVersion: string;
+  basePath?: string;             // TOKCAD: path prefix, '' or absent at the root
   studioSourceSha256: string;
   help: {
     schema: 'partmode.help/v1';
@@ -228,7 +229,11 @@ function sendJson(
   );
 }
 
+// TOKCAD: path prefix the app is served under (see scripts/build.ts); '' when at the root.
+let basePath = '';
+
 function redirect(req: IncomingMessage, res: ServerResponse, location: string): void {
+  location = location.startsWith('/') ? `${basePath}${location}` : location;
   const body = `Redirecting to ${location}\n`;
   res.writeHead(308, {
     ...commonHeaders(),
@@ -375,7 +380,13 @@ function parseCookies(req: IncomingMessage): Map<string, string> {
   return result;
 }
 
+// A __Host- cookie must have Path=/, so under a prefix the session uses __Secure- scoped to it.
+function cookiePath(): string {
+  return basePath || '/';
+}
+
 function sessionCookieName(req: IncomingMessage): string {
+  if (basePath) return isSecureRequest(req) ? '__Secure-partmode_account' : 'partmode_account_dev';
   return isSecureRequest(req) ? '__Host-partmode_account' : 'partmode_account_dev';
 }
 
@@ -383,7 +394,7 @@ function sessionCookie(req: IncomingMessage, token: string, expiresAt: string): 
   const maxAge = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
   return [
     `${sessionCookieName(req)}=${token}`,
-    'Path=/',
+    `Path=${cookiePath()}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
@@ -394,7 +405,7 @@ function sessionCookie(req: IncomingMessage, token: string, expiresAt: string): 
 function clearSessionCookie(req: IncomingMessage): string {
   return [
     `${sessionCookieName(req)}=`,
-    'Path=/',
+    `Path=${cookiePath()}`,
     'HttpOnly',
     'SameSite=Lax',
     'Max-Age=0',
@@ -404,6 +415,7 @@ function clearSessionCookie(req: IncomingMessage): string {
 }
 
 function googleBindingCookieName(req: IncomingMessage): string {
+  if (basePath) return isSecureRequest(req) ? '__Secure-partmode_oidc' : 'partmode_oidc_dev';
   return isSecureRequest(req) ? '__Host-partmode_oidc' : 'partmode_oidc_dev';
 }
 
@@ -414,7 +426,7 @@ function googleBindingCookie(req: IncomingMessage, value: string, expiresAt: str
   ));
   return [
     `${googleBindingCookieName(req)}=${value}`,
-    'Path=/',
+    `Path=${cookiePath()}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
@@ -425,7 +437,7 @@ function googleBindingCookie(req: IncomingMessage, value: string, expiresAt: str
 function clearGoogleBindingCookie(req: IncomingMessage): string {
   return [
     `${googleBindingCookieName(req)}=`,
-    'Path=/',
+    `Path=${cookiePath()}`,
     'HttpOnly',
     'SameSite=Lax',
     'Max-Age=0',
@@ -1157,6 +1169,7 @@ export async function startPartModeServer(
 ): Promise<RunningPartModeServer> {
   const distDir = resolve(options.distDir ?? process.env.PARTMODE_DIST_DIR ?? 'dist');
   const release = JSON.parse(readFileSync(resolve(distDir, 'release.json'), 'utf8')) as ReleaseManifest;
+  basePath = release.basePath ?? '';
   const indexHtml = readFileSync(resolve(distDir, 'index.html'));
   const helpHtml = readFileSync(resolve(distDir, 'help.html'));
   const aboutHtml = readFileSync(resolve(distDir, 'about.html'));
