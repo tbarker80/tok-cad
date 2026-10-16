@@ -25,7 +25,15 @@ with sync_playwright() as p:
     check(not errs, f'studio: no page/console errors {errs[:5]}')
     # import a STEP and export it again
     pg.set_input_files('#bw-open-file', STEP)
-    pg.wait_for_timeout(20000)
+    # wait for the kernel to build the part (over the internet the kernel loads slower than locally)
+    pg.wait_for_function('() => globalThis.TokcadStudio ? globalThis.TokcadStudio.bodyMeshes().size > 0 : true',
+                         timeout=180000)
+    pg.wait_for_timeout(3000)
+    # A branded build shows its start screen, and after a STEP import its "what next?" card:
+    # close them as a user would before using the toolbar.
+    while pg.is_visible('.tokcad-start'):
+        pg.keyboard.press('Escape')
+        pg.wait_for_timeout(300)
     with pg.expect_download(timeout=120000) as dl:
         pg.evaluate("() => document.getElementById('bw-export-step').click()")
     path = dl.value.path()
