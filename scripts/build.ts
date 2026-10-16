@@ -73,6 +73,7 @@ const STATIC_FILES = Object.freeze([
   'tokcad-primitives.js',
   'tokcad-start.js',
   'tokcad-coach.js',
+  'tokcad-mode.js',
   'studio-agent-service.js',
   'studio-addin-api.js',
   'studio-advanced-fillet.js',

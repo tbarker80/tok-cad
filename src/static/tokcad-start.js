@@ -7,6 +7,7 @@
 // like templates.
 
 import { TOKCAD_PRIMITIVES, buildTokcadPrimitive, getTokcadPrimitive } from './tokcad-primitives.js';
+import { getMode, setMode } from './tokcad-mode.js';
 
 const PREF_KEY = 'tokcad-start-hidden';
 const FILE_TYPES = '.step,.stp,.dxf,.json';
@@ -65,8 +66,8 @@ function frame(title, subtitle, body, { back = null, kind = 'start' } = {}) {
       ),
       body,
       el('footer', {},
-        el('label', { class: 'tokcad-hide' }, dontShow, ' Don\'t show this when I start a new part'),
-        el('button', { type: 'button', class: 'tokcad-link', onclick: close }, 'Close and use the full toolbar'),
+        el('label', { class: 'tokcad-hide' }, dontShow, ' Skip this page and go straight to the studio'),
+        el('button', { type: 'button', class: 'tokcad-link', onclick: close }, 'Go to the studio'),
       ),
     ),
   );
@@ -76,8 +77,34 @@ function frame(title, subtitle, body, { back = null, kind = 'start' } = {}) {
   overlay.querySelector('button, input')?.focus();
 }
 
-// ── Screen 1: how do you want to begin? ────────────────────────────────────────────────────
+// ── First visit: new to CAD? ───────────────────────────────────────────────────────────────
+function showModeQuestion() {
+  const pick = (mode) => () => { setMode(mode); showStart(); };
+  frame('Welcome to TOK CAD', 'Free 3D CAD in your browser. Have you used CAD before?',
+    el('div', { class: 'tokcad-start-body' },
+      el('div', { class: 'tokcad-choices' },
+        el('button', { type: 'button', class: 'tokcad-choice tokcad-choice-big', onclick: pick('beginner') },
+          el('strong', {}, 'I\'m new to CAD'),
+          el('span', {}, 'A simpler toolbar with the tools a first part needs, and a coach that explains each step like an engineer would.')),
+        el('button', { type: 'button', class: 'tokcad-choice tokcad-choice-big', onclick: pick('expert') },
+          el('strong', {}, 'I know CAD'),
+          el('span', {}, 'The full studio: sketches, features, assemblies, drawings and every tool.')),
+      ),
+      el('p', { class: 'tokcad-note' }, 'You can switch at any time, from this page or from the status bar at the bottom.'),
+    ), { kind: 'home' });
+}
+
+function modeSwitch() {
+  const mode = getMode() === 'expert' ? 'expert' : 'beginner';
+  const option = (value, label) => el('button', { type: 'button', class: 'tokcad-seg' + (mode === value ? ' is-on' : ''),
+    'aria-pressed': String(mode === value), onclick: () => { setMode(value); showStart(); } }, label);
+  return el('div', { class: 'tokcad-mode', role: 'group', 'aria-label': 'Studio mode' },
+    option('beginner', 'Beginner'), option('expert', 'Expert'));
+}
+
+// ── Start page: how do you want to begin? ──────────────────────────────────────────────────
 export function showStart() {
+  if (!getMode()) { showModeQuestion(); return; }
   const browse = el('input', { type: 'file', accept: FILE_TYPES, hidden: true });
   browse.addEventListener('change', () => { if (browse.files?.[0]) openFile(browse.files[0]); });
   const drop = el('div', { class: 'tokcad-drop', tabindex: '0', role: 'button',
@@ -89,8 +116,14 @@ export function showStart() {
   el('span', {}, 'STEP (.step, .stp) from any CAD program, a DXF outline, or a TOK CAD project'),
   el('span', { class: 'tokcad-btn' }, 'or browse your computer'),
   browse);
+  const hasPart = studio.hasContent();
+  const partName = hasPart ? (studio.document().name || 'your part') : null;
   frame('Start a new part', 'TOK CAD walks you from an idea to a part you can make. How do you want to begin?',
     el('div', { class: 'tokcad-start-body' },
+      modeSwitch(),
+      hasPart ? el('button', { type: 'button', class: 'tokcad-choice tokcad-continue', onclick: close },
+        el('strong', {}, 'Continue where you left off'),
+        el('span', {}, '“' + partName + '” is open in the studio.')) : null,
       drop,
       el('div', { class: 'tokcad-choices' },
         el('button', { type: 'button', class: 'tokcad-choice', onclick: showScratch },
@@ -100,7 +133,8 @@ export function showStart() {
           el('strong', {}, 'Start from an example'),
           el('span', {}, '30 ready-made parts (plates, brackets, knobs, enclosures) to change and learn from.')),
       ),
-    ));
+    ), { kind: 'home' });
+  overlay.dataset.hasPart = String(hasPart);
 }
 
 // ── Screen 2: from scratch ─────────────────────────────────────────────────────────────────
@@ -238,7 +272,10 @@ function onStudioEvent(kind) {
   } else if (!hasContent && hadContent && Date.now() > ourActionUntil && !prefHidden()) {
     showStart();                              // New / Clear: a fresh empty part
   }
-  if (hasContent && overlay?.dataset.kind === 'start') close();   // never the "what next" card
+  // The start page shown at load gains "Continue" once the restored project arrives.
+  if (overlay?.dataset.kind === 'home' && overlay.dataset.hasPart === 'false' && hasContent && Date.now() > ourActionUntil) {
+    showStart();
+  }
   hadContent = hasContent;
 }
 
@@ -264,7 +301,8 @@ function init(tokcadStudio) {
   studio.on(onStudioEvent);
   hadContent = studio.hasContent();
   globalThis.TokcadStart = { show: showStart };
-  if (!hadContent && !prefHidden()) showStart();
+  // The start page opens on every visit (the user's choice); "skip" goes straight to the studio.
+  if (!prefHidden() || !getMode()) showStart();
 }
 
 if (globalThis.TokcadStudio) init(globalThis.TokcadStudio);

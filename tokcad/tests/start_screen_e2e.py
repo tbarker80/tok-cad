@@ -28,6 +28,7 @@ def fresh(browser):
     ctx = browser.new_context(viewport={'width': 1400, 'height': 900})
     ctx.add_cookies([{'name': 'partmode_cookie_consent', 'value': 'essential-v1',
                       'url': BASE.split('/cad')[0] + '/cad/'}])
+    ctx.add_init_script("try { if (!localStorage.getItem('tokcad-mode')) localStorage.setItem('tokcad-mode', 'beginner'); } catch (e) {}")
     page = ctx.new_page()
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)[:200]))
@@ -129,7 +130,7 @@ with sync_playwright() as p:
 
     # 6. New part… brings it back; "don't show again" sticks across reloads
     page.click('#tokcad-start-open')
-    check(page.is_visible('.tokcad-start[data-kind="start"]'), '"New part…" reopens the start screen')
+    check(page.is_visible('.tokcad-start[data-kind="home"]'), '"New part…" reopens the start screen')
     page.check('#tokcad-start-hide')
     page.keyboard.press('Escape')
     page.evaluate('() => globalThis.TokcadStudio.startBlank()')   # a new, empty part...

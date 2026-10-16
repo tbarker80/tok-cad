@@ -26,6 +26,7 @@ with sync_playwright() as p:
     b = p.chromium.launch(args=['--use-gl=angle', '--enable-unsafe-swiftshader'])
     ctx = b.new_context(accept_downloads=True, viewport={'width': 1400, 'height': 900})
     ctx.add_cookies([{'name': 'partmode_cookie_consent', 'value': 'essential-v1', 'url': BASE.split('/cad')[0] + '/cad/'}])
+    ctx.add_init_script("try { if (!localStorage.getItem('tokcad-mode')) localStorage.setItem('tokcad-mode', 'beginner'); } catch (e) {}")
     page = ctx.new_page()
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)[:200]))
@@ -77,6 +78,9 @@ with sync_playwright() as p:
     page.wait_for_timeout(1500)
     intent = page.evaluate("() => globalThis.TokcadStudio.partExtension('intent')")
     check(intent and intent.get('process') == 'machined', 'intent is still there after a reload')
+    # every visit opens on the start page: continue to the part, as a returning user would
+    page.wait_for_selector('text=Continue where you left off', timeout=30000)
+    page.click('text=Continue where you left off')
 
     # close for this part, bring it back from the status bar
     page.click('.tokcad-coach-close')

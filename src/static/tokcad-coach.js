@@ -8,6 +8,7 @@
 // this browser's localStorage: it is about this user's session, not the design.
 
 import { sketchDof } from './studio-sketch-solver.js';
+import { getMode } from './tokcad-mode.js';
 
 export const PROCESSES = Object.freeze({
   printed: { label: '3D printed', up: 'the direction the printer builds (up from the bed)' },
@@ -237,7 +238,9 @@ function render() {
   const current = steps.find((s) => !s.done && !s.na) || null;
   lastState = { steps, model };
 
-  panel.hidden = Boolean(state.closed) || !studio.hasContent() && !model.intent;
+  // Open by default for beginners, closed by default for experts; either can change it per part.
+  const closed = state.closed ?? getMode() === 'expert';
+  panel.hidden = Boolean(closed) || !studio.hasContent() && !model.intent;
   panel.replaceChildren(
     el('header', {},
       el('button', { type: 'button', class: 'tokcad-coach-toggle', 'aria-expanded': String(!state.collapsed),
@@ -273,6 +276,7 @@ function init(tokcadStudio) {
     document.getElementById(id)?.addEventListener('click', () => { setPrefs(studio.document(), { exported: true }); render(); });
   }
   studio.on(() => render());
+  globalThis.addEventListener('tokcad:mode', () => render());
   globalThis.TokcadCoach = { render, state: () => lastState };
   render();
 }

@@ -133,3 +133,17 @@
 #tokcad-coach-open {
   background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; padding: 0 8px;
 }
+
+/* ── Beginner / Expert ─────────────────────────────────────────────────────────────────── */
+body.tokcad-beginner .tokcad-adv { display: none !important; }
+body:not(.tokcad-beginner) .tokcad-beginner-only { display: none !important; }
+.tokcad-mode { display: inline-flex; align-self: flex-start; border: 1px solid #3a4655; border-radius: 8px; overflow: hidden; }
+.tokcad-seg {
+  padding: 6px 16px; background: #1a222c; color: #aeb7c3; border: 0; font: inherit; font-weight: 600; cursor: pointer;
+}
+.tokcad-seg + .tokcad-seg { border-left: 1px solid #3a4655; }
+.tokcad-seg.is-on { background: #a9d1ff; color: #07121d; }
+.tokcad-continue { border-color: #4f7fb0; }
+#tokcad-mode-toggle {
+  background: none; border: 0; color: #85bcf4; font: inherit; cursor: pointer; text-decoration: underline; padding: 0 8px;
+}

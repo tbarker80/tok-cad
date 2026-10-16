@@ -64,6 +64,7 @@ export function studioExtras(html: string, ctx: BrandContext): string {
   </head>`)
     .replace('</body>', `    <script type="module" src="${asset('tokcad-start.js')}"></script>
     <script type="module" src="${asset('tokcad-coach.js')}"></script>
+    <script type="module" src="${asset('tokcad-mode.js')}"></script>
   </body>`);
 }
 

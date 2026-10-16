@@ -98,3 +98,13 @@ document. Design intent is saved in the part at `part.extensions.tokcad.intent` 
 "Design intent" change); panel state is per project in localStorage. "Why?" texts vary by
 process. Imported STEP parts skip the modeling steps. Tests: `node tokcad/tests/coach_unit.mjs`
 and `python tokcad/tests/coach_e2e.py`.
+
+## Beginner / Expert mode
+
+`src/static/tokcad-mode.js`. The first visit asks "Have you used CAD before?" (stored as
+`tokcad-mode` in localStorage); the start page and the status bar switch it any time. Beginner
+hides the ribbon tabs and tools a first part does not need (by a body class, so nothing is
+removed), adds a Check group (Measure, Weight & volume), and gives the kept tools plain-language
+tooltips; the coach opens by default. Expert is the full studio with the coach closed by default.
+The start page now opens on every visit, with "Continue where you left off" when a project is
+open; "Skip this page and go straight to the studio" turns that off. Test: `tokcad/tests/mode_e2e.py`.
