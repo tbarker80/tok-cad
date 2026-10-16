@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';   // TOKCAD: createHash for the studio CSP
 import {
   createReadStream,
   mkdirSync,
@@ -214,6 +214,32 @@ function send(
     ...extraHeaders,
   });
   res.end(req.method === 'HEAD' ? undefined : content);
+}
+
+// TOKCAD: the studio page's Content-Security-Policy in a branded build. The page carries inline
+// scripts (the first-visit welcome sequence), so the policy allows exactly those by hash, worked
+// out from the page being served: an upstream edit to the script cannot silently break it.
+// nginx sets the policy for every other /cad page and leaves this one to the app.
+let studioCsp = '';
+
+function studioCspFor(html: string): string {
+  const hashes = [...html.matchAll(/<script(?![^>]*\bsrc=)(?![^>]*type="application\/ld\+json")[^>]*>([\s\S]*?)<\/script>/g)]
+    // the browser hashes the script after HTML parsing, which turns CRLF and CR into LF
+    .map((m) => (m[1] ?? '').replace(/\r\n?/g, '\n'))
+    .map((text) => `'sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}'`);
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'wasm-unsafe-eval' ${hashes.join(' ')}`.trim(),
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "font-src 'self' data:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ');
 }
 
 // TOKCAD: a branded build's name in the messages people read ('' when unbranded).
@@ -1240,7 +1266,8 @@ function requestHandler(
         throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.', 'GET, HEAD');
       }
       if (path === '/') {
-        send(req, res, 200, 'text/html; charset=utf-8', indexHtml, 'public, max-age=0, must-revalidate');
+        send(req, res, 200, 'text/html; charset=utf-8', indexHtml, 'public, max-age=0, must-revalidate',
+          studioCsp ? { 'content-security-policy': studioCsp } : {});   // TOKCAD
         return;
       }
       if (path === '/help/' || path === '/help.html') {
@@ -1366,6 +1393,7 @@ export async function startPartModeServer(
   brandName = release.brand?.name ?? '';                       // TOKCAD
   brandPublicUrl = release.brand?.publicUrl ?? '';
   const indexHtml = readFileSync(resolve(distDir, 'index.html'));
+  studioCsp = release.brand ? studioCspFor(indexHtml.toString('utf8')) : '';   // TOKCAD
   const helpHtml = readFileSync(resolve(distDir, 'help.html'));
   const aboutHtml = readFileSync(resolve(distDir, 'about.html'));
   const help = JSON.parse(readFileSync(resolve(distDir, 'help-resources.json'), 'utf8')) as PartModeHelpManifest;

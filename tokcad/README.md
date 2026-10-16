@@ -58,3 +58,18 @@ projects open in the user's browser, so no CAD runs on the server. Google sign-i
 (no client id configured) and its controls are removed from the account page.
 
 Upstream's checks run against the plain build, where none of this applies.
+
+## Production (tok-share.com/cad)
+
+- Service `tok-cad` (NSSM, LocalSystem): `node D:\apps\tokcad\server.js`, production mode, port
+  5006 on loopback; data in `D:\apps\tokcad-data` (account databases, `mail.json`), closed to
+  everyone but SYSTEM, Administrators and the owner. One-time: `tokcad\scripts\install-service.ps1`.
+- Deploy (elevated): `tokcad\scripts\deploy.ps1`. It refuses an uncommitted tree or a commit
+  that is not on GitHub, builds `/cad` + branded, mirrors `dist\` into `D:\apps\tokcad`, and
+  checks the served page names that commit and its source link resolves.
+- nginx: `tokcad/nginx/tokcad-locations.conf`, included in the tok-share.com server block, plus
+  `limit_req_zone ... zone=tokcad ... rate=240r/m`. Those locations set their own headers, so
+  the site-wide CSP (which blocks WebAssembly) does not apply; the studio page's CSP comes from
+  the app, with its inline scripts allowed by hash (`studioCspFor` in `src/server.ts`).
+- Backup: scheduled task `TOK-CAD-Backup` runs `tokcad\scripts\backup.mjs` nightly into
+  `D:\apps\tokcad-backups\<date>` (SQLite `VACUUM INTO`), keeping 14 days.
