@@ -61,11 +61,13 @@ $env:TOKCAD_BASE_PATH = '/cad'
 $env:TOKCAD_BRAND = '1'
 Push-Location $RepoDir
 try {
-    & npm ci --no-audit --no-fund 2>&1 | Out-Null
+    # Through cmd: in Windows PowerShell, `2>&1` on a native command under ErrorAction Stop turns
+    # npm's first stderr warning into a terminating error even when the command succeeds.
+    cmd /c "npm ci --no-audit --no-fund >nul 2>&1"
     if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-    & npm run build 2>&1 | Select-Object -Last 1
+    (cmd /c "npm run build 2>&1") | Select-Object -Last 1
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
-    & npm run check:integrity 2>&1 | Select-Object -Last 1
+    (cmd /c "npm run check:integrity 2>&1") | Select-Object -Last 1
     if ($LASTEXITCODE -ne 0) { throw "integrity check failed" }
 } finally {
     Pop-Location

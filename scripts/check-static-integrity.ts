@@ -19,6 +19,8 @@ interface ReleaseManifest {
   runtimeModules: AssetEntry[];
   runtimePackages: Array<{ name: string; version: string; license: string }>;
   assets: AssetEntry[];
+  brand?: { name: string };      // TOKCAD: set in a branded build
+  basePath?: string;             // TOKCAD: path prefix, '' at the root
 }
 
 const EXPECTED_RUNTIME_MODULES = Object.freeze([
@@ -142,6 +144,9 @@ if (account.includes('/static/')) throw new Error('account page still references
 if (help.includes('/static/')) throw new Error('help page still references the legacy /static asset namespace');
 if (about.includes('/static/')) throw new Error('about page still references /static assets');
 if (!index.includes(expectedPrefix + 'studio.js')) throw new Error('index does not load versioned Studio');
+// TOKCAD: these check upstream's page wording (Google sign-in, partmode.com, headless copy),
+// which a branded build replaces on purpose; file hashes and runtime modules are still checked.
+if (!release.brand) {
 if (
   !index.includes('id="pm-agent-access"') ||
   !index.includes('>Sign in</span>') ||
@@ -244,6 +249,7 @@ if (
 ) {
   throw new Error('cookie inventory and controls are incomplete');
 }
+}   // TOKCAD: end of upstream page-wording checks
 const expectedRuntimePackages = [
   { name: 'jose', version: '6.2.6', license: 'MIT' },
   { name: 'oauth4webapi', version: '3.8.6', license: 'MIT' },
@@ -265,7 +271,8 @@ for (const runtimePackage of expectedRuntimePackages) {
 }
 if (
   !privacyScript.includes("const COOKIE_VALUE = 'essential-v1'") ||
-  !privacyScript.includes('Max-Age=${COOKIE_MAX_AGE}; Path=/; SameSite=Lax') ||
+  // TOKCAD: under a path prefix the consent cookie is scoped to it
+  !privacyScript.includes(`Max-Age=\${COOKIE_MAX_AGE}; Path=${release.basePath || '/'}; SameSite=Lax`) ||
   !privacyScript.includes("window.location.protocol === 'https:' ? '; Secure' : ''")
 ) {
   throw new Error('cookie persistence attributes are incomplete');
