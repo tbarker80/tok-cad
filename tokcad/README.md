@@ -21,3 +21,25 @@ port 8099) and the server on 4402, then `python tokcad/tests/basepath_e2e.py` (P
 ## Upstream gate on Windows
 
 `npm run ci:gate` passes except `smoke:entrypoint`, which needs symlink rights.
+
+## Email-verified accounts
+
+`src/tokcad-accounts.ts` keeps each account's email, its verification state and single-use
+tokens (stored as SHA-256 digests) in `tokcad.sqlite` beside the account store, so
+`account-store.ts` only gained `setPassword()`. Signup needs an email and gives no session;
+sign-in (by name or email) is refused until the link in the confirmation email is opened.
+Replies never say whether an address is registered; the owner of a registered address is told
+by email instead. Mail per address is limited to 4 an hour.
+
+Mail settings live in `<PARTMODE_STATE_DIR>/mail.json`, never in the repository:
+
+    {"from": "TOK CAD <you@gmail.com>",
+     "smtp": {"host": "smtp.gmail.com", "port": 587, "user": "you@gmail.com", "pass": "<app password>"}}
+
+For development use `{"from": "...", "outbox": "C:\path\to\outbox"}`: each message is written
+there as JSON instead of being sent.
+
+Upstream's smoke tests sign up without email; run them with `TOKCAD_EMAIL_VERIFICATION=off`.
+The server refuses that setting when `NODE_ENV=production`.
+
+Test: `python tokcad/tests/email_accounts_e2e.py http://127.0.0.1:8099/cad/ <outbox>`.

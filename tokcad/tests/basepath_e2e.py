@@ -1,6 +1,5 @@
-"""TOK CAD at /cad behind a proxy: no request leaves /cad/, no errors, signup works, cookie
-scoped to /cad, a STEP imports and exports."""
-import os, sys, time, secrets
+"""TOK CAD at /cad behind a proxy: no request leaves /cad/, no errors, a STEP imports and exports."""
+import os, sys
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:8099/cad/'
@@ -33,20 +32,7 @@ with sync_playwright() as p:
     size = os.path.getsize(path)
     head = open(path, 'rb').read(64)
     check(size > 10000 and b'ISO-10303-21' in head, f'STEP import -> export round trip ({dl.value.suggested_filename}, {size} bytes)')
-    # account page: sign up, session cookie scoped to /cad
-    pg.goto(BASE + 'account', wait_until='networkidle')
-    name = 'tok' + secrets.token_hex(4)
-    pg.fill('#pm-signup-form input[name=name]', name)
-    pg.fill('#pm-signup-form input[name=password]', 'correct horse battery staple')
-    pg.click('#pm-signup-form button[type=submit]')
-    pg.wait_for_timeout(3000)
-    cookies = [c for c in ctx.cookies() if 'account' in c['name']]
-    check(len(cookies) == 1 and cookies[0]['path'] == '/cad', f'signed up; session cookie {[(c["name"], c["path"]) for c in cookies]}')
-    me = pg.evaluate("async () => (await fetch('/cad/api/v1/account', {credentials: 'same-origin'})).status")
-    check(me == 200, f'session works for /cad/api/v1/account ({me})')
-    pg.goto(BASE.rstrip('/').rsplit('/cad', 1)[0] + '/', wait_until='load')
-    sent = pg.evaluate("() => document.cookie")
-    check('account' not in sent, 'session cookie not visible outside /cad')
+    # signup and the session cookie's scope are covered by email_accounts_e2e.py
     check(not [e for e in errs if 'favicon' not in e], f'no errors overall {errs[:5]}')
     b.close()
 print('ALL PASSED' if ok else 'FAILED')

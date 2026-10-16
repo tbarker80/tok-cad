@@ -146,10 +146,12 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/nodemailer": "^8.0.2",
     "puppeteer": "^24.43.1",
     "typescript": "^5.8.0"
   },
   "dependencies": {
+    "nodemailer": "^7.0.13",
     "openid-client": "6.8.4"
   }
 }

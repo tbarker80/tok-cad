@@ -84,6 +84,7 @@
         `The account service returned HTTP ${response.status}.`;
       const error = new Error(message);
       error.status = response.status;
+      error.code = payload && typeof payload.error === 'string' ? payload.error : '';   // TOKCAD
       throw error;
     }
     return payload;
@@ -336,6 +337,8 @@
     }
 
     const credentials = { name: name.value.trim(), password: password.value };
+    const email = textField(form, 'email');                  // TOKCAD: signup carries the email
+    if (email) credentials.email = email.value.trim();
     if (!credentials.name) {
       setStatus('Enter your account name.', 'error');
       name.focus();
@@ -351,16 +354,96 @@
     setStatus('Securing your account session...', 'busy');
     try {
       const payload = await apiRequest(endpoint, { method: 'POST', body: credentials });
+      if (payload.verificationSent) {                         // TOKCAD: no session until confirmed
+        form.reset();
+        setStatus(`Check your email: we sent a link to ${credentials.email} to confirm your account. ` +
+          'Open it to finish signing up.', 'success');
+        return;
+      }
       if (typeof payload.csrfToken === 'string') csrfToken = payload.csrfToken;
       form.reset();
       await refreshAccount();
       setStatus(successMessage, 'success');
     } catch (error) {
       setStatus(errorMessage(error), 'error');
+      if (error.code === 'EMAIL_NOT_VERIFIED') {              // TOKCAD: offer a new link
+        showOnly('tok-resend-form', credentials.name.includes('@') ? credentials.name : '');
+      }
     } finally {
       password.value = '';
       setBusy(form, false);
     }
+  }
+
+  // ── TOKCAD: confirm email, resend, forgot and reset passphrase ─────────────────────────────
+  let resetToken = '';
+
+  function showOnly(formId, email = '') {
+    for (const id of ['tok-resend-form', 'tok-forgot-form', 'tok-reset-form']) {
+      const form = byId(id);
+      if (form) form.hidden = id !== formId;
+    }
+    const field = textField(byId(formId), 'email');
+    if (field && email) field.value = email;
+    textField(byId(formId), field && !email ? 'email' : 'password')?.focus();
+  }
+
+  async function sendEmailForm(form, endpoint, message) {
+    const email = textField(form, 'email');
+    if (!email?.value.trim()) return;
+    setBusy(form, true);
+    try {
+      await apiRequest(endpoint, { method: 'POST', body: { email: email.value.trim() } });
+      setStatus(message.replace('{email}', email.value.trim()), 'success');
+      form.hidden = true;
+    } catch (error) {
+      setStatus(errorMessage(error), 'error');
+    } finally {
+      setBusy(form, false);
+    }
+  }
+
+  async function submitReset(form) {
+    const password = textField(form, 'password');
+    const confirm = textField(form, 'confirm');
+    if (!password || !confirm) return;
+    if (password.value !== confirm.value) {
+      setStatus('The two passphrases do not match.', 'error');
+      confirm.focus();
+      return;
+    }
+    setBusy(form, true);
+    try {
+      await apiRequest('/password/reset', { method: 'POST', body: { token: resetToken, password: password.value } });
+      resetToken = '';
+      form.hidden = true;
+      setStatus('Passphrase changed. Sign in with the new one.', 'success');
+      byId('pm-login-form')?.querySelector('input[name=name]')?.focus();
+    } catch (error) {
+      setStatus(errorMessage(error), 'error');
+    } finally {
+      password.value = '';
+      confirm.value = '';
+      setBusy(form, false);
+    }
+  }
+
+  /** ?verify=ok|invalid after the confirmation link, ?reset=TOKEN from the reset email. */
+  function consumeEmailResult() {
+    const url = new URL(window.location.href);
+    const verify = url.searchParams.get('verify');
+    const reset = url.searchParams.get('reset');
+    if (!verify && !reset) return null;
+    url.searchParams.delete('verify');
+    url.searchParams.delete('reset');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    if (reset) {
+      resetToken = reset;
+      return ['reset', 'Choose a new passphrase for your account.', ''];
+    }
+    return verify === 'ok'
+      ? ['verified', 'Email confirmed. Your TOK CAD account is ready.', 'success']
+      : ['invalid', 'That confirmation link has expired or was already used. Sign in, or send a new link.', 'error'];
   }
 
   async function createKey(form) {
@@ -564,6 +647,21 @@
       event.preventDefault();
       submitAuthentication(event.currentTarget, '/session', 'Signed in. Your agent keys are ready.');
     });
+    byId('tok-forgot-open')?.addEventListener('click', () => showOnly('tok-forgot-form'));   // TOKCAD
+    byId('tok-forgot-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendEmailForm(event.currentTarget, '/password/forgot',
+        'If {email} belongs to an account, a reset link is on its way. Check your inbox (and spam folder).');
+    });
+    byId('tok-resend-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendEmailForm(event.currentTarget, '/email/resend',
+        'If {email} is waiting for confirmation, a new link is on its way. Check your inbox (and spam folder).');
+    });
+    byId('tok-reset-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitReset(event.currentTarget);
+    });
     byId('pm-key-form')?.addEventListener('submit', (event) => {
       event.preventDefault();
       createKey(event.currentTarget);
@@ -597,8 +695,14 @@
     setStatus('Loading account access...', 'busy');
     try {
       const googleResult = consumeGoogleResult();
+      const emailResult = consumeEmailResult();               // TOKCAD
       const payload = await refreshAccount();
-      if (googleResult) {
+      if (emailResult) {
+        const [kind, message, state] = emailResult;
+        setStatus(message, state);
+        if (kind === 'reset') showOnly('tok-reset-form');
+        if (kind === 'invalid') showOnly('tok-resend-form');
+      } else if (googleResult) {
         const [message, state, requiresAccount] = googleResult;
         setStatus(
           requiresAccount && payload.authenticated !== true

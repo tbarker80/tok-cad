@@ -283,10 +283,13 @@ const accountHtml = `<!doctype html>
           <div>
             <p class="pm-account-kicker">New account</p>
             <h2>Create account</h2>
-            <p class="pm-account-note">Local CAD never requires this account. A passphrase account does not require an email address or depend on Google.</p>
+            <p class="pm-account-note">Local CAD never requires an account. We email you a link to confirm your address before the account can sign in.</p>
           </div>
           <label>Account name
             <input name="name" type="text" required minlength="3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{2,39}" autocomplete="username" spellcheck="false" placeholder="workshop-name" />
+          </label>
+          <label>Email
+            <input name="email" type="email" maxlength="254" autocomplete="email" spellcheck="false" placeholder="you@example.com" />
           </label>
           <label>Passphrase
             <input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="12 characters minimum" />
@@ -300,13 +303,53 @@ const accountHtml = `<!doctype html>
             <h2>Sign in</h2>
             <p class="pm-account-note">Signing in lets this browser appear as an online PartMode tab to agents using one of your keys.</p>
           </div>
-          <label>Account name
-            <input name="name" type="text" required minlength="3" maxlength="40" autocomplete="username" spellcheck="false" />
+          <label>Account name or email
+            <input name="name" type="text" required minlength="3" maxlength="254" autocomplete="username" spellcheck="false" />
           </label>
           <label>Passphrase
             <input name="password" type="password" required minlength="12" maxlength="256" autocomplete="current-password" />
           </label>
           <button type="submit">Sign in</button>
+          <button type="button" id="tok-forgot-open" class="tok-link-button">Forgot your passphrase?</button>
+        </form>
+
+        <form id="tok-resend-form" hidden>
+          <div>
+            <p class="pm-account-kicker">Confirm your email</p>
+            <h2>Send a new link</h2>
+            <p class="pm-account-note">The confirmation link expires after 24 hours. Enter the address you signed up with and we will send a new one.</p>
+          </div>
+          <label>Email
+            <input name="email" type="email" required maxlength="254" autocomplete="email" spellcheck="false" />
+          </label>
+          <button type="submit">Send a new link</button>
+        </form>
+
+        <form id="tok-forgot-form" hidden>
+          <div>
+            <p class="pm-account-kicker">Forgot your passphrase</p>
+            <h2>Reset it by email</h2>
+            <p class="pm-account-note">We send a reset link to your account's email address. It works once, for one hour.</p>
+          </div>
+          <label>Email
+            <input name="email" type="email" required maxlength="254" autocomplete="email" spellcheck="false" />
+          </label>
+          <button type="submit">Send reset link</button>
+        </form>
+
+        <form id="tok-reset-form" hidden>
+          <div>
+            <p class="pm-account-kicker">Reset</p>
+            <h2>Choose a new passphrase</h2>
+            <p class="pm-account-note">This signs out every browser signed in to the account.</p>
+          </div>
+          <label>New passphrase
+            <input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="12 characters minimum" />
+          </label>
+          <label>Repeat it
+            <input name="confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password" />
+          </label>
+          <button type="submit">Set passphrase</button>
         </form>
       </div>
 
@@ -572,6 +615,7 @@ const runtimeModulePaths = Object.freeze([
   'mcp.js',
   'relay-hub.js',
   'server.js',
+  'tokcad-accounts.js',          // TOKCAD: verified email
   'ux-navigation-contract.js',
   'headless/agent-host.js',
   'headless/kernel-host.js',
@@ -589,7 +633,7 @@ const runtimeModules: AssetEntry[] = runtimeModulePaths.map((path) => {
     sha256: sha256(content),
   };
 });
-const runtimePackages = ['jose', 'oauth4webapi', 'openid-client'].map((name) => {
+const runtimePackages = ['jose', 'oauth4webapi', 'openid-client', 'nodemailer'].map((name) => {   // TOKCAD: nodemailer
   const source = resolve(repositoryRoot, 'node_modules', name);
   cpSync(source, resolve(distRoot, 'node_modules', name), { recursive: true });
   const metadata = JSON.parse(readFileSync(resolve(source, 'package.json'), 'utf8')) as {

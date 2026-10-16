@@ -29,6 +29,7 @@ const EXPECTED_RUNTIME_MODULES = Object.freeze([
   'mcp.js',
   'relay-hub.js',
   'server.js',
+  'tokcad-accounts.js',          // TOKCAD
   'ux-navigation-contract.js',
   'headless/agent-host.js',
   'headless/kernel-host.js',
@@ -247,6 +248,7 @@ const expectedRuntimePackages = [
   { name: 'jose', version: '6.2.6', license: 'MIT' },
   { name: 'oauth4webapi', version: '3.8.6', license: 'MIT' },
   { name: 'openid-client', version: '6.8.4', license: 'MIT' },
+  { name: 'nodemailer', version: '7.0.13', license: 'MIT-0' },   // TOKCAD: verification mail
 ];
 if (JSON.stringify(release.runtimePackages) !== JSON.stringify(expectedRuntimePackages)) {
   throw new Error('locked OIDC runtime package metadata is incomplete');
@@ -254,7 +256,9 @@ if (JSON.stringify(release.runtimePackages) !== JSON.stringify(expectedRuntimePa
 for (const runtimePackage of expectedRuntimePackages) {
   if (
     !statSync(resolve(distRoot, 'node_modules', runtimePackage.name, 'package.json')).isFile() ||
-    !statSync(resolve(distRoot, 'node_modules', runtimePackage.name, 'LICENSE.md')).isFile()
+    // TOKCAD: nodemailer ships LICENSE, not LICENSE.md
+    !['LICENSE.md', 'LICENSE'].some((file) =>
+      statSync(resolve(distRoot, 'node_modules', runtimePackage.name, file), { throwIfNoEntry: false })?.isFile())
   ) {
     throw new Error(`runtime package is incomplete: ${runtimePackage.name}`);
   }

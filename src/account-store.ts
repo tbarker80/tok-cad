@@ -620,6 +620,22 @@ export class AccountStore {
     return account;
   }
 
+  // TOKCAD: password reset by email. Re-enables the passphrase on the account.
+  async setPassword(accountId: string, password: string): Promise<void> {
+    this.#assertOpen();
+    assertPassword(password);
+    const salt = randomBytes(PASSWORD_SALT_BYTES);
+    const digest = await derivePassword(password, salt);
+    try {
+      const result = this.#database.prepare(`
+        UPDATE accounts SET password_salt = ?, password_digest = ?, password_enabled = 1 WHERE id = ?
+      `).run(salt, digest, accountId);
+      if (result.changes !== 1) throw new AccountStoreError('ACCOUNT_NOT_FOUND', 'Account not found.');
+    } finally {
+      digest.fill(0);
+    }
+  }
+
   async authenticateAccount(name: string, password: string): Promise<Account | null> {
     this.#assertOpen();
     const normalizedName = validAuthenticationName(name);

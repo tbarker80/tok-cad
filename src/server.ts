@@ -25,6 +25,9 @@ import {
 import { HeadlessSessionManager } from './headless-sessions.js';
 import type { PartModeHelpManifest } from './help.js';
 import { handleMcpRequest, MCP_PROTOCOL_VERSION } from './mcp.js';
+import {
+  alreadyRegisteredMessage, Mailer, normalizeEmail, resetMessage, TokcadAccounts, verifyMessage,
+} from './tokcad-accounts.js';
 import { RelayError, RelayHub, type AgentIdentity } from './relay-hub.js';
 
 export interface ReleaseFileEntry {
@@ -67,6 +70,7 @@ export interface RunningPartModeServer {
 
 interface ApiContext {
   store: AccountStore;
+  tokcad: { accounts: TokcadAccounts; mailer: Mailer };   // TOKCAD: verified email
   relay: RelayHub;
   headless: HeadlessSessionManager;
   release: ReleaseManifest;
@@ -509,6 +513,7 @@ function accountPayload(context: ApiContext, session: WebSession): Record<string
     authenticated: true,
     csrfToken: session.csrfToken,
     account: session.account,
+    email: context.tokcad.accounts.byAccount(session.account.id)?.email ?? null,   // TOKCAD
     authMethods: {
       passphrase: session.account.hasPassphrase,
       google: {
@@ -563,6 +568,144 @@ function requireMethod(req: IncomingMessage, methods: readonly string[]): void {
   }
 }
 
+// ── TOKCAD: email verification and password reset ───────────────────────────────────────────
+/** TOKCAD_EMAIL_VERIFICATION=off restores upstream signup for upstream's smoke tests. */
+function emailVerification(): boolean {
+  return process.env.TOKCAD_EMAIL_VERIFICATION !== 'off';
+}
+
+const EMAIL_SEND_LIMIT = 4;                     // mails to one address per window
+const EMAIL_SEND_WINDOW_MS = 60 * 60 * 1000;
+
+function appUrl(req: IncomingMessage, context: ApiContext, path: string): string {
+  const origin = context.publicOrigin ?? requestOrigin(req);
+  if (!origin) throw new HttpError(400, 'REQUEST_ORIGIN_INVALID', 'Could not determine this site\'s address.');
+  return `${origin}${basePath}${path}`;
+}
+
+function takeEmailLimit(context: ApiContext, email: string): void {
+  if (!context.authLimiter.take(`email:${email}`, EMAIL_SEND_LIMIT, EMAIL_SEND_WINDOW_MS)) {
+    throw new HttpError(429, 'RATE_LIMITED', 'Too many emails to that address. Try again in an hour.');
+  }
+}
+
+async function sendMail(context: ApiContext, message: Parameters<Mailer['send']>[0]): Promise<void> {
+  try {
+    await context.tokcad.mailer.send(message);
+  } catch (error) {
+    console.error(`TOK CAD mail to ${message.to} failed:`, error instanceof Error ? error.message : error);
+    throw new HttpError(503, 'MAIL_FAILED', 'The email could not be sent. Try again in a few minutes.');
+  }
+}
+
+async function sendVerification(
+  req: IncomingMessage, context: ApiContext, accountId: string, name: string, email: string,
+): Promise<void> {
+  const token = context.tokcad.accounts.createToken(accountId, 'verify');
+  const link = appUrl(req, context, `/api/v1/email/verify?token=${token}`);
+  await sendMail(context, verifyMessage(email, name, link));
+}
+
+/** A no-store redirect to a page of this app (verification links must not be cached). */
+function appRedirect(res: ServerResponse, path: string, cookie?: string): void {
+  res.writeHead(303, {
+    ...commonHeaders(),
+    location: `${basePath}${path}`,
+    'cache-control': 'no-store',
+    ...(cookie ? { 'set-cookie': cookie } : {}),
+  });
+  res.end();
+}
+
+async function handleTokcadAccountApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  context: ApiContext,
+): Promise<boolean> {
+  const { store } = context;
+  const accounts = context.tokcad.accounts;
+
+  // The link in the verification email: verify, sign in, and land on the account page.
+  if (path === '/api/v1/email/verify') {
+    requireMethod(req, ['GET']);
+    const token = new URL(req.url ?? '/', 'http://x').searchParams.get('token');
+    const accountId = accounts.consumeToken(token, 'verify');
+    if (!accountId) {
+      appRedirect(res, '/account?verify=invalid');
+      return true;
+    }
+    accounts.markVerified(accountId);
+    const created = store.createWebSession(accountId);
+    appRedirect(res, '/account?verify=ok', sessionCookie(req, created.token, created.expiresAt));
+    return true;
+  }
+
+  // Send a new verification link. Same reply whatever the address, to avoid probing.
+  if (path === '/api/v1/email/resend') {
+    requireMethod(req, ['POST']);
+    exactOriginRequired(req, context.publicOrigin);
+    if (!context.authLimiter.take(authRateKey(req, 'email-resend'), AUTH_ATTEMPT_LIMIT, AUTH_WINDOW_MS)) {
+      throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Try again later.');
+    }
+    const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    const email = normalizeEmail(body.email);
+    const found = email ? accounts.byEmail(email) : null;
+    if (email && found && !found.verified) {
+      takeEmailLimit(context, email);
+      await sendVerification(req, context, found.accountId, found.name, email);
+    }
+    sendJson(req, res, 200, { sent: true });
+    return true;
+  }
+
+  // Forgot password: a reset link to a verified address (an unverified one gets its
+  // verification link instead). Same reply whatever the address.
+  if (path === '/api/v1/password/forgot') {
+    requireMethod(req, ['POST']);
+    exactOriginRequired(req, context.publicOrigin);
+    if (!context.authLimiter.take(authRateKey(req, 'password-forgot'), AUTH_ATTEMPT_LIMIT, AUTH_WINDOW_MS)) {
+      throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Try again later.');
+    }
+    const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    const email = normalizeEmail(body.email);
+    if (!email) throw new HttpError(400, 'EMAIL_INVALID', 'Enter a valid email address.');
+    const found = accounts.byEmail(email);
+    if (found) {
+      takeEmailLimit(context, email);
+      if (found.verified) {
+        const token = accounts.createToken(found.accountId, 'reset');
+        await sendMail(context, resetMessage(email, found.name, appUrl(req, context, `/account?reset=${token}`)));
+      } else {
+        await sendVerification(req, context, found.accountId, found.name, email);
+      }
+    }
+    sendJson(req, res, 200, { sent: true });
+    return true;
+  }
+
+  // Set a new password with the token from the reset email; every session is signed out.
+  if (path === '/api/v1/password/reset') {
+    requireMethod(req, ['POST']);
+    exactOriginRequired(req, context.publicOrigin);
+    if (!context.authLimiter.take(authRateKey(req, 'password-reset'), AUTH_ATTEMPT_LIMIT, AUTH_WINDOW_MS)) {
+      throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Try again later.');
+    }
+    const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    if (typeof body.password !== 'string') throw new HttpError(400, 'PASSWORD_INVALID', 'Enter a new password.');
+    const accountId = accounts.consumeToken(body.token, 'reset');
+    if (!accountId) {
+      throw new HttpError(400, 'RESET_LINK_INVALID', 'That reset link has expired or was already used. Ask for a new one.');
+    }
+    await AUTH_WORK_LIMITER.run(() => store.setPassword(accountId, body.password as string));
+    store.revokeAllWebSessions(accountId);
+    accounts.markVerified(accountId);           // the link proved the address
+    sendJson(req, res, 200, { reset: true, authenticated: false }, { 'set-cookie': clearSessionCookie(req) });
+    return true;
+  }
+  return false;
+}
+
 async function handleAccountApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -570,6 +713,8 @@ async function handleAccountApi(
   context: ApiContext,
 ): Promise<void> {
   const { store, relay } = context;
+
+  if (await handleTokcadAccountApi(req, res, path, context)) return;   // TOKCAD
 
   if (path === '/api/v1/account' && req.method === 'GET') {
     const authenticated = webSession(req, store);
@@ -627,15 +772,37 @@ async function handleAccountApi(
       throw new HttpError(429, 'RATE_LIMITED', 'Too many account attempts. Try again later.');
     }
     const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    if (!emailVerification()) {
+      // TOKCAD: upstream behavior, for upstream's own smoke tests only (refused in production)
+      const account = await AUTH_WORK_LIMITER.run(
+        () => store.createAccount(body.name as string, body.password as string),
+      );
+      const created = store.createWebSession(account.id);
+      const session = store.getWebSession(created.token);
+      if (!session) throw new Error('New account session was not persisted.');
+      sendJson(req, res, 201, accountPayload(context, session), {
+        'set-cookie': sessionCookie(req, created.token, created.expiresAt),
+      });
+      return;
+    }
+    // TOKCAD: an account needs a verified email before it can sign in. The reply is the same
+    // whether or not the address is already registered, so it cannot be used to probe for
+    // accounts; the owner of a registered address is told by email instead.
+    const email = normalizeEmail(body.email);
+    if (!email) throw new HttpError(400, 'EMAIL_INVALID', 'Enter a valid email address.');
+    takeEmailLimit(context, email);
+    const existing = context.tokcad.accounts.byEmail(email);
+    if (existing) {
+      await sendMail(context, alreadyRegisteredMessage(email, existing.name, appUrl(req, context, '/account')));
+      sendJson(req, res, 201, { authenticated: false, verificationSent: true });
+      return;
+    }
     const account = await AUTH_WORK_LIMITER.run(
       () => store.createAccount(body.name as string, body.password as string),
     );
-    const created = store.createWebSession(account.id);
-    const session = store.getWebSession(created.token);
-    if (!session) throw new Error('New account session was not persisted.');
-    sendJson(req, res, 201, accountPayload(context, session), {
-      'set-cookie': sessionCookie(req, created.token, created.expiresAt),
-    });
+    context.tokcad.accounts.addEmail(account.id, account.name, email);
+    await sendVerification(req, context, account.id, account.name, email);
+    sendJson(req, res, 201, { authenticated: false, verificationSent: true });
     return;
   }
 
@@ -645,10 +812,19 @@ async function handleAccountApi(
       throw new HttpError(429, 'RATE_LIMITED', 'Too many sign-in attempts. Try again later.');
     }
     const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    // TOKCAD: sign in with the account name or its email address.
+    const byEmail = typeof body.name === 'string' && body.name.includes('@')
+      ? context.tokcad.accounts.byEmail(normalizeEmail(body.name) ?? '')
+      : null;
+    const signInName = byEmail ? byEmail.name : body.name;
     const account = await AUTH_WORK_LIMITER.run(
-      () => store.authenticateAccount(body.name as string, body.password as string),
+      () => store.authenticateAccount(signInName as string, body.password as string),
     );
     if (!account) throw new HttpError(401, 'INVALID_CREDENTIALS', 'The account name or passphrase is incorrect.');
+    if (emailVerification() && !context.tokcad.accounts.isVerified(account.id)) {
+      throw new HttpError(403, 'EMAIL_NOT_VERIFIED',
+        'Confirm your email first: open the link we sent you, or send a new one below.');
+    }
     const prior = webSession(req, store);
     if (prior) store.revokeWebSession(prior.rawToken);
     const created = store.createWebSession(account.id);
@@ -680,6 +856,7 @@ async function handleAccountApi(
     relay.revokeAccount(authenticated.session.account.id);
     context.headless.revokeAccount(authenticated.session.account.id);
     store.deleteAccount(authenticated.session.account.id);
+    context.tokcad.accounts.deleteAccount(authenticated.session.account.id);   // TOKCAD
     sendJson(req, res, 200, { deleted: true, authenticated: false }, { 'set-cookie': clearSessionCookie(req) });
     return;
   }
@@ -1187,6 +1364,9 @@ export async function startPartModeServer(
   if (process.env.NODE_ENV === 'production' && !configuredStateDir) {
     throw new Error('PARTMODE_STATE_DIR is required in production; ephemeral account storage is prohibited.');
   }
+  if (process.env.NODE_ENV === 'production' && !emailVerification()) {
+    throw new Error('TOKCAD_EMAIL_VERIFICATION=off is for tests; it is refused in production.');
+  }
   if (process.env.NODE_ENV === 'production' && !publicOrigin) {
     throw new Error('PARTMODE_PUBLIC_ORIGIN is required in production for exact-origin enforcement.');
   }
@@ -1197,6 +1377,7 @@ export async function startPartModeServer(
     filename: resolve(stateDir, 'partmode.sqlite'),
     pepper: loadOrCreatePepper(stateDir),
   });
+  const tokcadAccounts = new TokcadAccounts(stateDir);   // TOKCAD: verified email
   const relay = new RelayHub();
   const headless = new HeadlessSessionManager({
     store,
@@ -1210,6 +1391,7 @@ export async function startPartModeServer(
     help,
     googleAuth,
     authLimiter: new FixedWindowLimiter(),
+    tokcad: { accounts: tokcadAccounts, mailer: new Mailer(stateDir) },
     ...(publicOrigin ? { publicOrigin } : {}),
   };
   const handler = requestHandler(
@@ -1244,6 +1426,7 @@ export async function startPartModeServer(
         googleAuth?.close();
         relay.close();
         store.close();
+        tokcadAccounts.close();
       }
       if (headlessError) throw headlessError;
     })();
