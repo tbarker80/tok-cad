@@ -42,6 +42,7 @@ export interface ReleaseManifest {
   releaseSha: string;
   assetVersion: string;
   basePath?: string;             // TOKCAD: path prefix, '' or absent at the root
+  brand?: { name: string; publicUrl: string; sourceUrl: string };   // TOKCAD: branded build
   studioSourceSha256: string;
   help: {
     schema: 'partmode.help/v1';
@@ -215,6 +216,18 @@ function send(
   res.end(req.method === 'HEAD' ? undefined : content);
 }
 
+// TOKCAD: a branded build's name in the messages people read ('' when unbranded).
+let brandName = '';
+let brandPublicUrl = '';
+
+function brandMessage(value: unknown): unknown {
+  if (!brandName || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const message = (value as { message?: unknown }).message;
+  return typeof message === 'string'
+    ? { ...value, message: message.replace(/\bPartMode\b/g, brandName) }
+    : value;
+}
+
 function sendJson(
   req: IncomingMessage,
   res: ServerResponse,
@@ -227,7 +240,7 @@ function sendJson(
     res,
     status,
     'application/json; charset=utf-8',
-    status === 204 ? '' : `${JSON.stringify(value)}\n`,
+    status === 204 ? '' : `${JSON.stringify(brandMessage(value))}\n`,
     'no-store',
     extraHeaders,
   );
@@ -874,6 +887,10 @@ async function handleAccountApi(
     const authenticated = requireWebSession(req, store);
     requireCsrf(req, authenticated.session);
     const body = objectBody(await readJson(req, API_BODY_LIMIT));
+    if (brandName && body.headless === true) {
+      // TOKCAD: no server-headless CAD; agents work on projects open in the user's browser.
+      throw new HttpError(400, 'HEADLESS_UNAVAILABLE', 'This server does not run agent projects without a browser.');
+    }
     const created = store.createAgentKey(
       authenticated.session.account.id,
       body.label as string,
@@ -1176,15 +1193,14 @@ function requestHandler(
 ) {
   const assetPrefix = `/assets/${release.assetVersion}/`;
   const assetRoot = resolve(distDir, 'assets', release.assetVersion);
-  const robots = `User-agent: *\nAllow: /\nDisallow: /account\nDisallow: /api/\nDisallow: /mcp\nSitemap: https://partmode.com/sitemap.xml\n`;
+  // TOKCAD: a branded build names its own address
+  const site = brandPublicUrl || 'https://partmode.com';
+  const robots = `User-agent: *\nAllow: /\nDisallow: /account\nDisallow: /api/\nDisallow: /mcp\nSitemap: ${site}/sitemap.xml\n`;
   const sitemap =
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-    '  <url><loc>https://partmode.com/</loc></url>\n' +
-    '  <url><loc>https://partmode.com/help</loc></url>\n' +
-    '  <url><loc>https://partmode.com/about</loc></url>\n' +
-    '  <url><loc>https://partmode.com/privacy</loc></url>\n' +
-    '  <url><loc>https://partmode.com/cookies</loc></url>\n' +
+    ['/', '/help', '/about', '/privacy', '/cookies']
+      .map((page) => `  <url><loc>${site}${page}</loc></url>\n`).join('') +
     '</urlset>\n';
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -1347,6 +1363,8 @@ export async function startPartModeServer(
   const distDir = resolve(options.distDir ?? process.env.PARTMODE_DIST_DIR ?? 'dist');
   const release = JSON.parse(readFileSync(resolve(distDir, 'release.json'), 'utf8')) as ReleaseManifest;
   basePath = release.basePath ?? '';
+  brandName = release.brand?.name ?? '';                       // TOKCAD
+  brandPublicUrl = release.brand?.publicUrl ?? '';
   const indexHtml = readFileSync(resolve(distDir, 'index.html'));
   const helpHtml = readFileSync(resolve(distDir, 'help.html'));
   const aboutHtml = readFileSync(resolve(distDir, 'about.html'));

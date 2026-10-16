@@ -183,6 +183,12 @@ with sync_playwright() as p:
     pg.click('#pm-login-form button[type=submit]')
     wait_status(pg, 'Signed in')
     csrf = pg.evaluate("async () => (await (await fetch('%sapi/v1/account')).json()).csrfToken" % BASE)
+    key = lambda headless: pg.evaluate("""async ([url, csrf, headless]) => (await fetch(url, {method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-PartMode-CSRF': csrf},
+        body: JSON.stringify({label: 'test agent', access: 'edit', headless})})).status""",
+                                      [BASE + 'api/v1/agent-keys', csrf, headless])
+    if os.environ.get('TOKCAD_BRANDED') == '1':
+        check(key(True) == 400 and key(False) == 201, 'agent keys: normal ones created, server-headless refused')
     gone = pg.evaluate("""async ([url, csrf]) => (await fetch(url, {method: 'DELETE',
         headers: {'Content-Type': 'application/json', 'X-PartMode-CSRF': csrf}, body: '{}'})).status""",
                        [BASE + 'api/v1/account', csrf])

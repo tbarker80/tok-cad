@@ -43,3 +43,18 @@ Upstream's smoke tests sign up without email; run them with `TOKCAD_EMAIL_VERIFI
 The server refuses that setting when `NODE_ENV=production`.
 
 Test: `python tokcad/tests/email_accounts_e2e.py http://127.0.0.1:8099/cad/ <outbox>`.
+
+## TOK CAD branding
+
+`TOKCAD_BRAND=1` builds TOK CAD (production builds use it together with `TOKCAD_BASE_PATH=/cad`):
+name and logo, TOK CAD's own About, privacy and cookie pages, a cookie banner that matches what
+is stored, and a "Source code" link to this repository at the exact commit being served (a
+branded build refuses to run from an uncommitted tree). See `src/tokcad-brand.ts`. Only prose
+"PartMode" is renamed: header names (`X-PartMode-CSRF`), storage names, protocol ids and the
+kernel's STEP tags stay, so files still move between TOK CAD and PartMode.
+
+A branded server also refuses agent keys with the server-headless grant: agents work only on
+projects open in the user's browser, so no CAD runs on the server. Google sign-in stays off
+(no client id configured) and its controls are removed from the account page.
+
+Upstream's checks run against the plain build, where none of this applies.

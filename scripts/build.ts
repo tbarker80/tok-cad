@@ -11,6 +11,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderPartModeAboutHtml } from '../src/about.js';
 import { buildPartModeHelpManifest, renderPartModeHelpHtml } from '../src/help.js';
+import {
+  aboutHtml, brandAccountHtml, brandHtml, BRANDED_ASSETS, brandScript, COOKIE_BANNER_TEXT, cookiesPage,
+  markSvg, privacyPage, type BrandContext,
+} from '../src/tokcad-brand.js';
 
 interface AssetEntry {
   path: string;
@@ -40,6 +44,13 @@ const BASE_PATH = (() => {
 const APP_URL = /(?<!apiRequest\()(?<!currentTarget, )(["'`(])\/(?=(?:api|assets|help|account|about|privacy|cookies|auth|mcp)(?:[\/?#"'`)]))/g;
 // Attribute links to the app's root: href="/" and href="/#..."
 const ROOT_LINK = /((?:href|action)=["'])\/(?=["'#?])/g;
+
+// TOKCAD: TOKCAD_BRAND=1 builds TOK CAD (name, logo, legal pages, source link); see src/tokcad-brand.ts.
+const BRAND = process.env.TOKCAD_BRAND === '1';
+const TOKCAD_REPO = (process.env.TOKCAD_SOURCE_REPO ?? 'https://github.com/tbarker80/tok-cad').replace(/\/+$/, '');
+const TOKCAD_PUBLIC_URL = (process.env.TOKCAD_PUBLIC_URL ?? `https://tok-share.com${BASE_PATH}`).replace(/\/+$/, '');
+// Under a path prefix the session cookie is __Secure- (src/server.ts sessionCookieName).
+const SESSION_COOKIE = BASE_PATH ? '__Secure-partmode_account' : '__Host-partmode_account';
 
 function withBase(text: string): string {
   if (!BASE_PATH) return text;
@@ -178,9 +189,23 @@ for (const asset of sourceAssets) {
   versionHash.update(asset.content);
   versionHash.update('\0');
 }
+versionHash.update(`tokcad:${BASE_PATH}:${BRAND ? 'brand' : 'plain'}`);   // TOKCAD
 const assetVersion = versionHash.digest('hex').slice(0, 16);
 const assetRoot = resolve(distRoot, 'assets', assetVersion);
 const exactReleaseSha = releaseSha();
+const brand: BrandContext = {
+  name: 'TOK CAD',
+  publicUrl: TOKCAD_PUBLIC_URL,
+  repoUrl: TOKCAD_REPO,
+  sourceUrl: `${TOKCAD_REPO}/tree/${exactReleaseSha}`,
+  operator: 'Tokeena Engineering',
+  contactUrl: 'https://tok-eng.com',
+  assetVersion,
+  effective: '15 October 2026',
+};
+if (BRAND && !/^[0-9a-f]{40}$/.test(exactReleaseSha)) {
+  throw new Error('A TOK CAD build needs a committed release: its source link names the exact commit.');
+}
 
 rmSync(distRoot, { recursive: true, force: true });
 mkdirSync(assetRoot, { recursive: true });
@@ -191,9 +216,10 @@ for (const asset of sourceAssets) {
   mkdirSync(dirname(destination), { recursive: true });
   let output = asset.content;
   if (/\.(?:css|js|svg|txt)$/.test(asset.path)) {
-    output = Buffer.from(
-      withBase(asset.content.toString('utf8').replaceAll('/static/', `/assets/${assetVersion}/`)),
-    );
+    let text = asset.content.toString('utf8').replaceAll('/static/', `/assets/${assetVersion}/`);
+    if (BRAND && BRANDED_ASSETS.includes(asset.path)) text = brandScript(text, brand);   // TOKCAD
+    if (BRAND && asset.path === 'partmode-mark.svg') text = markSvg(brand);
+    output = Buffer.from(withBase(text));
   }
   writeFileSync(destination, output);
   assetManifest.push({
@@ -203,11 +229,12 @@ for (const asset of sourceAssets) {
   });
 }
 
+const UPSTREAM_BANNER_TEXT = 'PartMode uses essential first-party cookies for this choice, your account session if you sign in, and a short-lived browser binding only while you connect Google. Browser projects stay on your device. Projects opened with an explicitly granted headless agent key are stored under your account. There are no analytics, advertising, or third-party tracking cookies.';
 const privacyBanner = `
     <aside class="pm-cookie-banner" id="pm-cookie-banner" role="dialog" aria-labelledby="pm-cookie-title" aria-describedby="pm-cookie-copy" hidden>
       <div class="pm-cookie-copy">
         <strong id="pm-cookie-title">Essential storage, no tracking</strong>
-        <p id="pm-cookie-copy">PartMode uses essential first-party cookies for this choice, your account session if you sign in, and a short-lived browser binding only while you connect Google. Browser projects stay on your device. Projects opened with an explicitly granted headless agent key are stored under your account. There are no analytics, advertising, or third-party tracking cookies.</p>
+        <p id="pm-cookie-copy">${BRAND ? COOKIE_BANNER_TEXT(brand) : UPSTREAM_BANNER_TEXT}</p>
         <div class="pm-cookie-links"><a href="/cookies">Cookie details and settings</a><a href="/privacy">Privacy notice</a></div>
       </div>
       <div class="pm-cookie-actions">
@@ -228,16 +255,17 @@ html = html.replace(
   '</body>',
   `${privacyBanner}\n    <script src="/assets/${assetVersion}/privacy.js" defer></script>\n  </body>`,
 );
-writeFileSync(resolve(distRoot, 'index.html'), withBase(html));
+writeFileSync(resolve(distRoot, 'index.html'), withBase(BRAND ? brandHtml(html, brand) : html));
 
 const helpManifest = buildPartModeHelpManifest({
   version: productVersion,
   releaseSha: exactReleaseSha,
   readSource: (sourcePath) => readFileSync(resolve(repositoryRoot, sourcePath), 'utf8'),
 });
-writeFileSync(resolve(distRoot, 'help.html'), withBase(renderPartModeHelpHtml(helpManifest, { assetVersion })));
+const helpHtml = renderPartModeHelpHtml(helpManifest, { assetVersion });
+writeFileSync(resolve(distRoot, 'help.html'), withBase(BRAND ? brandHtml(helpHtml, brand) : helpHtml));
 writeFileSync(resolve(distRoot, 'help-resources.json'), `${JSON.stringify(helpManifest, null, 2)}\n`);
-writeFileSync(resolve(distRoot, 'about.html'), withBase(renderPartModeAboutHtml({
+writeFileSync(resolve(distRoot, 'about.html'), withBase(BRAND ? aboutHtml(brand) : renderPartModeAboutHtml({
   assetVersion,
   releaseSha: exactReleaseSha,
   version: productVersion,
@@ -448,7 +476,7 @@ const accountHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'account.html'), withBase(accountHtml));
+writeFileSync(resolve(distRoot, 'account.html'), withBase(BRAND ? brandAccountHtml(accountHtml, brand) : accountHtml));
 
 const privacyHtml = `<!doctype html>
 <html lang="en">
@@ -511,7 +539,7 @@ const privacyHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'privacy.html'), withBase(privacyHtml));
+writeFileSync(resolve(distRoot, 'privacy.html'), withBase(BRAND ? privacyPage(brand, SESSION_COOKIE) : privacyHtml));
 
 const cookiesHtml = `<!doctype html>
 <html lang="en">
@@ -603,7 +631,7 @@ const cookiesHtml = `<!doctype html>
   </body>
 </html>
 `;
-writeFileSync(resolve(distRoot, 'cookies.html'), withBase(cookiesHtml));
+writeFileSync(resolve(distRoot, 'cookies.html'), withBase(BRAND ? cookiesPage(brand, SESSION_COOKIE) : cookiesHtml));
 
 // Keep the executable Node control plane as an exact allowlist. Every module
 // copied into the release is also bound by bytes and SHA-256 in release.json.
@@ -652,6 +680,7 @@ const release = {
   releaseSha: exactReleaseSha,
   assetVersion,
   basePath: BASE_PATH,
+  ...(BRAND ? { brand: { name: brand.name, publicUrl: brand.publicUrl, sourceUrl: brand.sourceUrl } } : {}),
   studioSourceSha256: sha256(studioSource),
   help: {
     schema: helpManifest.schema,
