@@ -72,6 +72,7 @@ const STATIC_FILES = Object.freeze([
   'tokcad.css',                  // TOKCAD: start screen and coach (loaded by branded builds)
   'tokcad-primitives.js',
   'tokcad-start.js',
+  'tokcad-coach.js',
   'studio-agent-service.js',
   'studio-addin-api.js',
   'studio-advanced-fillet.js',

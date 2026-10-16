@@ -25912,8 +25912,10 @@
     }
   }
   function tokcadRootPart(document) {
+    const parts = document?.partDefinitions || [];
     const partId = document?.rootDocument?.kind === 'part' ? document.rootDocument.partId : null;
-    return (document?.partDefinitions || []).find((part) => part.id === partId) || null;
+    // An imported STEP opens as an assembly of one part: its notes belong to that part.
+    return parts.find((part) => part.id === partId) || (parts.length === 1 ? parts[0] : null);
   }
   globalThis.TokcadStudio = Object.freeze({
     version: 1,

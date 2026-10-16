@@ -86,3 +86,15 @@ plus ordinary sketch features, so they stay editable. Both act only through
 `change` (document committed) and `meshes` (kernel rebuild) events. Sketches start on the
 ground plane only: the studio's sketch entry offers just the base plane for an empty part.
 Test: `python tokcad/tests/start_screen_e2e.py`.
+
+## Engineering coach (branded builds)
+
+`src/static/tokcad-coach.js` docks a checklist above the Inspector that walks a beginner through
+designing like an engineer: decide what the part is for and how it will be made (3D printed,
+machined, injection molded), make the main body, fully define the sketches (via the solver's
+`sketchDof`), add details in a sensible order (a fillet before a cut is flagged), name the sizes
+that matter, check the part, and hand it over. Steps tick themselves off by reading the
+document. Design intent is saved in the part at `part.extensions.tokcad.intent` (an undoable
+"Design intent" change); panel state is per project in localStorage. "Why?" texts vary by
+process. Imported STEP parts skip the modeling steps. Tests: `node tokcad/tests/coach_unit.mjs`
+and `python tokcad/tests/coach_e2e.py`.
