@@ -44,6 +44,7 @@ const SHAPE_ART = {
 let studio = null;
 let overlay = null;
 let pendingStep = null;      // name of a STEP file just opened from the start screen or toolbar
+let pendingMold = false;     // that file was opened to be checked for molding: go straight to the check
 let ourActionUntil = 0;      // the start screen itself is creating the new part (a short window)
 let hadContent = false;
 
@@ -132,9 +133,38 @@ export function showStart() {
         el('button', { type: 'button', class: 'tokcad-choice', onclick: () => { close(); studio.openTemplateLibrary(); } },
           el('strong', {}, 'Start from an example'),
           el('span', {}, '30 ready-made parts (plates, brackets, knobs, enclosures) to change and learn from.')),
+        el('button', { type: 'button', class: 'tokcad-choice', onclick: showMolding, 'data-start': 'molding' },
+          el('strong', {}, 'Check a part for molding'),
+          el('span', {}, 'Open a STEP file and see its draft, wall thickness, undercuts and mold halves.')),
       ),
     ), { kind: 'home' });
   overlay.dataset.hasPart = String(hasPart);
+}
+
+// ── Molding analysis: open a STEP, go straight to the molding check ───────────────────────
+function showMolding() {
+  const browse = el('input', { type: 'file', accept: '.step,.stp', hidden: true });
+  browse.addEventListener('change', () => { if (browse.files?.[0]) openFile(browse.files[0]); });
+  const drop = el('div', { class: 'tokcad-drop', tabindex: '0', role: 'button', 'data-start-drop': 'molding',
+    'aria-label': 'Drop a STEP file here, or press Enter to browse',
+    onclick: () => browse.click(),
+    onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); browse.click(); } } },
+  el('div', { class: 'tokcad-drop-icon', 'aria-hidden': 'true' }, '⇩'),
+  el('strong', {}, 'Drop the part’s STEP file here'),
+  el('span', {}, 'The solid you want to injection mold, from any CAD program (.step, .stp)'),
+  el('span', { class: 'tokcad-btn' }, 'or browse your computer'),
+  browse);
+  frame('Check a part for molding', 'TOK CAD works out which way the mold opens and checks the part’s draft, wall thickness ' +
+    'and undercuts, and where the two mold halves meet. The check needs a free account, so you may be asked to sign in.',
+  el('div', { class: 'tokcad-start-body' }, drop), { back: showStart, kind: 'molding' });
+}
+
+/** After a part opened for molding has loaded: open the molding check and run it. */
+function checkForMolding() {
+  const mold = globalThis.TokcadMold;
+  if (!mold) { studio.say('The molding check is still loading. Open it from "Molding" in the status bar.'); return; }
+  mold.open();
+  mold.run();
 }
 
 // ── Screen 2: from scratch ─────────────────────────────────────────────────────────────────
@@ -213,9 +243,16 @@ function openFile(file) {
     studio.say('TOK CAD opens STEP (.step, .stp), DXF and TOK CAD project (.json) files.');
     return;
   }
+  // A file dropped or chosen on the molding screen goes straight to the molding check.
+  const forMolding = overlay?.dataset.kind === 'molding';
+  if (forMolding && !isStep(file.name)) {
+    studio.say('The molding check needs a STEP file (.step or .stp) of the solid part.');
+    return;
+  }
   close();
   ourActionUntil = Date.now() + 3000;
   pendingStep = isStep(file.name) ? file.name : null;
+  pendingMold = forMolding;
   studio.openFile(file);
 }
 
@@ -233,9 +270,9 @@ function showWhatNext(fileName) {
         'An imported STEP has no feature history. Change it by adding features on top: Cut, Hole Wizard, Fillet, or Direct Push/Pull on a face.')) },
         el('strong', {}, 'Change it'),
         el('span', {}, 'Add holes, cuts, fillets, or push and pull its faces.')),
-      el('button', { type: 'button', class: 'tokcad-choice', disabled: true },
-        el('strong', {}, 'Check it for manufacturing'),
-        el('span', {}, 'Coming soon: draft, wall thickness, sharp corners and overhangs for molding, machining or 3D printing.')),
+      el('button', { type: 'button', class: 'tokcad-choice', onclick: go(checkForMolding), 'data-next': 'molding' },
+        el('strong', {}, 'Check it for molding'),
+        el('span', {}, 'Draft, wall thickness, undercuts and where the two mold halves meet, for injection molding.')),
       el('button', { type: 'button', class: 'tokcad-choice', onclick: go(() => click('#bw-export-stl')) },
         el('strong', {}, 'Export it for 3D printing'),
         el('span', {}, 'Save it as an STL file for a slicer.')),
@@ -268,7 +305,12 @@ function onStudioEvent(kind) {
   if (hasContent && pendingStep) {
     const name = pendingStep;
     pendingStep = null;
-    setTimeout(() => showWhatNext(name), 200);
+    if (pendingMold) {
+      pendingMold = false;
+      setTimeout(checkForMolding, 200);
+    } else {
+      setTimeout(() => showWhatNext(name), 200);
+    }
   } else if (!hasContent && hadContent && Date.now() > ourActionUntil && !prefHidden()) {
     showStart();                              // New / Clear: a fresh empty part
   }

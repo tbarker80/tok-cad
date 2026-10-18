@@ -246,6 +246,25 @@ with sync_playwright() as p:
     f2 = pg.evaluate('() => globalThis.TokcadMold.findings()')
     check(len(f2['noDraft']) < len(f['noDraft']), f'plate: fewer faces without draft ({len(f["noDraft"])} -> {len(f2["noDraft"])})')
 
+    # ── the start page's "Check a part for molding" goes straight to the check ───────────
+    pg.click('#tokcad-start-open')
+    pg.wait_for_selector('.tokcad-start', timeout=30000)
+    pg.click('[data-start="molding"]')
+    check(pg.is_visible('[data-start-drop="molding"]') and 'Check a part for molding' in pg.inner_text('.tokcad-start'),
+          'start page: "Check a part for molding" opens its own STEP drop screen')
+    before = pg.evaluate('() => globalThis.TokcadStudio.contentHash()')
+    pg.set_input_files('[data-start-drop="molding"] input[type=file]', os.path.join(FIXTURES, 'box_test.step'))
+    pg.wait_for_function('h => globalThis.TokcadStudio.contentHash() !== h', arg=before, timeout=120000)
+    # wait for a result that belongs to THIS part: the panel may still hold an earlier part's
+    pg.wait_for_function('''() => { const s = globalThis.TokcadMold.state();
+        return s.open && !s.busy && ((s.result && s.sentHash === globalThis.TokcadStudio.contentHash()) || s.error); }''',
+                         timeout=180000)
+    st = pg.evaluate('''() => { const s = globalThis.TokcadMold.state();
+        return { error: s.error, msg: s.message, rules: s.result?.rules, walls: s.result?.bodies[0].faces.filter((f) => Math.abs(f.minDraftDeg) < 0.01).length }; }''')
+    check(not st['error'] and st['rules'] == 'v2' and st['walls'] == 4 and not st['msg']
+          and not pg.is_visible('.tokcad-start') and pg.is_visible('#tokcad-mold'),
+          f'start page: the part opens and the molding check runs by itself, no "what next?" card ({st})')
+
     # ── the coach offers the check for molded parts only ─────────────────────────────────
     supports = pg.evaluate("() => [globalThis.TokcadChecks.supports('molded'), globalThis.TokcadChecks.supports('printed')]")
     check(supports == [True, False], f'the coach offers the molding check for molded parts only ({supports})')
