@@ -681,12 +681,25 @@ function splitBlock(result) {
       'Split the mold'));
 }
 
+/** The slides the last split built: direction, stroke and a suggested unit to confirm. */
+function slideList() {
+  const slides = state.splitSlides;
+  if (!slides || !slides.length || state.error) return null;
+  return el('div', { class: 'tokcad-finding', 'data-mold-slides': '' },
+    el('p', {}, el('b', {}, 'Slides'), ' (suggestions to confirm; lifters are not built yet)'),
+    el('ul', {}, slides.map((sl) => el('li', {},
+      el('b', {}, sl.name), `: moves ${fmtVec(sl.direction)}, stroke ${sl.stroke.toFixed(1)} mm `,
+      `(undercut ${sl.depth.toFixed(1)} mm + 2 mm), face ${sl.face.map((v) => v.toFixed(0)).join(' × ')} mm. `,
+      sl.unit.text))));
+}
+
 async function splitMold() {
   if (state.busy || !state.result || !state.session) return;
   const name = (studio.document()?.name || 'part').replace(/[^\w .-]+/g, '').trim() || 'part';
   state.busy = true;
   state.error = false;
-  state.message = 'Building the mold (cavity, core and parting surface)…';
+  state.splitSlides = null;
+  state.message = 'Building the mold (cavity, core, slides)…';
   render();
   try {
     const out = await api(`/api/v1/mold/sessions/${state.session}/split`, {
@@ -713,8 +726,12 @@ async function splitMold() {
       tick();
     });
     if (!opened) throw new Error('The mold was built, but TOK CAD could not open it. The message at the bottom of the window says why.');
-    state.message = `Opened "${name} mold": the part, the cavity and the core, in a ${size} mm block, ` +
-      'meeting at the parting line. Your part is still in Recover. Slides and lifters are not built yet.';
+    const slides = out.report.slides || [];
+    state.message = `Opened "${name} mold": the part, the cavity and the core` +
+      (slides.length ? ` and ${plural(slides.length, 'slide')}` : '') +
+      `, in a ${size} mm block, meeting at the parting line. Your part is still in Recover.` +
+      (slides.length ? '' : ' Lifters are not built yet.');
+    state.splitSlides = slides;
   } catch (error) {
     state.error = true;
     state.message = String(error.message || error);
@@ -806,6 +823,7 @@ function render() {
         : el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', disabled: state.busy, onclick: run, 'data-mold-run': '' },
           state.busy ? 'Checking…' : result ? 'Check again' : 'Run the check'),
       message,
+      slideList(),
       result && !state.busy ? [
         stale ? el('p', { class: 'tokcad-note' }, 'The model has changed since this check. Run it again to update.') : null,
         el('p', { class: 'tokcad-hint' }, directionText(result)),
