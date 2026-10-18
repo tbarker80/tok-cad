@@ -41,7 +41,8 @@ const WHY = {
     'cool last and pull the surface in (sink marks). Keeping walls close to one thickness is the most important molding rule.',
   undercut: 'An undercut is any shape that would lock the part in the mold when it opens, like a side hole or a snap hook. ' +
     'Each needs a moving part in the mold (a slide, or a lifter), which adds cost, so designers remove them where they can.',
-  halves: 'A simple mold is two halves. The cavity half forms the outside you see; the core half forms the inside, and ' +
+  halves: 'A simple mold is two halves. The parting line goes on a flat end face where it can, and the cavity half forms that end; ' +
+    'the core half forms the walls and the inside, and the part stays on it to be pushed off. ' +
     'the part stays on it to be pushed off. The yellow line is where the halves meet, and leaves a faint line on the part.',
 };
 
@@ -106,7 +107,7 @@ async function run() {
     }
     state.message = 'Analyzing for molding (this can take up to a minute)…';
     render();
-    const pull = PULLS[state.pull]?.vector || null;
+    const pull = state.pull === 'custom' ? state.customPull : (PULLS[state.pull]?.vector || null);
     const result = await api(`/api/v1/mold/sessions/${state.session}/analyze`,
       { body: JSON.stringify(pull ? { pull } : {}), type: 'application/json' });
     if (studio.contentHash() !== hash) throw new Error('The model changed while it was being checked. Run the check again.');
@@ -331,11 +332,16 @@ export function draftOperations(result, items, studioFaces, { flatOnly = false }
     if (!groups.has(key)) groups.set(key, { bodyId: face.bodyId, below, faceRefs: [] });
     groups.get(key).faceRefs.push(face.ref);
   }
+  const sides = new Set(groups.keys());
   for (const { bodyId, below, faceRefs } of groups.values()) {
     operations.push({
       kind: 'feature.draft',
       input: {
-        id: 'tokcad-draft-' + shortId(), name: below ? 'Draft for molding (lower half)' : 'Draft for molding',
+        id: 'tokcad-draft-' + shortId(),
+        // One feature per body is plain "Draft for molding"; when a body has faces on both sides
+        // of the parting line, the two features say which half each one serves.
+        name: sides.has(bodyId + '|above') && sides.has(bodyId + '|below')
+          ? (below ? 'Draft for molding (core side)' : 'Draft for molding (cavity side)') : 'Draft for molding',
         bodyId, neutralPlaneDatumId: datumId, angle: FIX_DRAFT_DEG, faceRefs, flip: below,
       },
     });
@@ -528,7 +534,8 @@ function legend(view, result) {
     thickness: [[RED, `Thin (under ${mm(result.wall.nominal * THIN_FRACTION)})`], [GREEN, `About ${mm(result.wall.nominal)} (the usual wall)`],
       [BLUE, `Thick (over ${mm(result.wall.nominal * THICK_FRACTION)})`], [GREY, 'Not measured']],
     undercut: [[RED, 'Undercut: locks the part in the mold'], [GREEN, 'Releases cleanly']],
-    halves: [[ORANGE, 'Cavity half (the outside)'], [TEAL, 'Core half (the inside)'], [RED, 'Needs a slide or lifter'], [GREY, 'Unclear']],
+    halves: [[ORANGE, 'Cavity half (forms the parting-line end)'], [TEAL, 'Core half (forms the walls; the part stays on it)'],
+      [RED, 'Needs a slide or lifter'], [GREY, 'Unclear']],
   }[view];
   return el('ul', { class: 'tokcad-legend' }, rows.map(([c, text]) =>
     el('li', {}, el('span', { class: 'tokcad-swatch', style: `background:${css(c)}` }), text)));
@@ -590,6 +597,38 @@ function summary(result) {
   return blocks;
 }
 
+const fmtVec = (v) => v.map((c) => (Math.abs(c) < 1e-9 ? 0 : +c.toFixed(3))).join(', ');
+
+const REASONS = {
+  'least-undercut': 'the direction with the fewest undercuts',
+  'depth-capped': 'the direction with the fewest undercuts among those no deeper than the part is long',
+  shallowest: 'the shallowest direction (every direction is deeper than the part is long)',
+};
+
+function directionText(result) {
+  const how = result.pull.inferred ? `worked out as ${REASONS[result.pull.reason] || 'the best fit'}: ` : '';
+  return `Opening direction: ${how}${fmtVec(result.pull.vector)} (yellow arrow). The parting line is on the end the arrow points to.`;
+}
+
+/** A close call on which end takes the parting line: say so, and offer the other end. */
+function endNote(result) {
+  const end = result.partingEnd;
+  if (!end || !end.close) return null;
+  const text = end.noFlatEnd
+    ? 'Neither end has a flat face for the parting line, so it may need a stepped or shaped one. You can try the other end.'
+    : 'Close call: the other end has nearly as much flat face for the parting line.';
+  return el('div', { class: 'tokcad-finding' }, el('p', {}, text),
+    el('button', { type: 'button', class: 'tokcad-btn', 'data-mold-flip': '', disabled: state.busy, onclick: flipEnd },
+      'Put the parting line on the other end'));
+}
+
+function flipEnd() {
+  if (!state.result) return;
+  state.customPull = state.result.pull.vector.map((c) => (c === 0 ? 0 : -c));
+  state.pull = 'custom';
+  run();
+}
+
 function render() {
   if (!panel) return;
   panel.hidden = !state.open;
@@ -598,7 +637,8 @@ function render() {
   const stale = result && state.sentHash !== studio.contentHash();
   const pullSelect = el('select', { 'aria-label': 'Mold opening direction', disabled: state.busy,
     onchange: (event) => { state.pull = event.target.value; } },
-  Object.entries(PULLS).map(([id, p]) => el('option', { value: id, selected: state.pull === id }, p.label)));
+  Object.entries(PULLS).map(([id, p]) => el('option', { value: id, selected: state.pull === id }, p.label)),
+  state.customPull ? el('option', { value: 'custom', selected: state.pull === 'custom' }, 'Flipped: ' + fmtVec(state.customPull)) : null);
 
   let message = null;
   if (state.message === 'signin') {
@@ -620,8 +660,8 @@ function render() {
       message,
       result && !state.busy ? [
         stale ? el('p', { class: 'tokcad-note' }, 'The model has changed since this check. Run it again to update.') : null,
-        el('p', { class: 'tokcad-hint' }, `Opening direction: ${result.pull.inferred ? 'worked out as ' : ''}` +
-          `${result.pull.vector.map((v) => (Math.abs(v) < 1e-9 ? 0 : +v.toFixed(3))).join(', ')} (yellow arrow).`),
+        el('p', { class: 'tokcad-hint' }, directionText(result)),
+        endNote(result),
         el('div', { class: 'tokcad-mold-views', role: 'tablist' }, Object.entries(VIEWS).map(([id, label]) =>
           el('button', { type: 'button', role: 'tab', 'aria-selected': String(state.view === id), 'data-mold-view': id,
             class: 'tokcad-mold-tab' + (state.view === id ? ' is-on' : ''),

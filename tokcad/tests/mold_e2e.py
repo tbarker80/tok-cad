@@ -158,6 +158,19 @@ with sync_playwright() as p:
             pg.click(f'#tokcad-mold [data-mold-view="{view}"]')
             check(pg.is_visible(f'#tokcad-mold [data-mold-view="{view}"].is-on'), f'box: the {view} view opens')
         check('7 days' in pg.inner_text('#tokcad-mold'), 'the panel says parts are kept for 7 days')
+        # rules v2: the walls with no draft go to the core; equal flat ends are a close call to flip
+        v2 = pg.evaluate('''() => { const r = globalThis.TokcadMold.state().result; const b = r.bodies[0];
+            const walls = b.faces.filter((f) => Math.abs(f.minDraftDeg) < 0.01);
+            return { rules: r.rules, end: r.partingEnd, pull: r.pull.vector,
+                     wallsInCore: walls.length > 0 && walls.every((f) => f.label === b.labels.coreSide) }; }''')
+        check(v2['rules'] == 'v2' and v2['wallsInCore'], f'box: v2 rules, every wall with no draft in the core half ({v2["rules"]})')
+        pg.click('#tokcad-mold [data-mold-view="halves"]')
+        check(pg.is_visible('#tokcad-mold [data-mold-flip]') and 'Close call' in pg.inner_text('#tokcad-mold'),
+              'box: equal flat ends are reported as a close call, with a flip button')
+        pg.click('#tokcad-mold [data-mold-flip]')
+        pg.wait_for_function('() => !globalThis.TokcadMold.state().busy', timeout=120000)
+        flipped = pg.evaluate('() => globalThis.TokcadMold.state().result.pull.vector')
+        check(flipped == [-c if c else 0 for c in v2['pull']], f'box: the flip re-runs with the opening direction reversed ({v2["pull"]} -> {flipped})')
         if SHOTS:
             pg.screenshot(path=os.path.join(SHOTS, 'mold_box_halves.png'))
         # a forced pull direction is sent and used
