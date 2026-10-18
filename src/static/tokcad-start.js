@@ -331,7 +331,9 @@ function init(tokcadStudio) {
   // STEP files opened from the toolbar also get the "what next" card.
   document.getElementById('bw-open-file')?.addEventListener('change', (event) => {
     const name = event.target.files?.[0]?.name;
-    if (isStep(name) && !pendingStep) pendingStep = name;
+    // The molding check's "Split the mold" opens its result itself: no "what next?" for that.
+    const fromSplit = Date.now() - (globalThis.__tokcadOpeningSplit || 0) < 5000;
+    if (isStep(name) && !pendingStep && !fromSplit) pendingStep = name;
   }, true);
   // Clearer labels on the upstream open control.
   const openBtn = document.getElementById('bw-open-btn');

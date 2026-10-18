@@ -723,7 +723,7 @@ async function handleTokcadMoldApi(
       sendJson(req, res, 200, await mold.createSession(accountId, step));
       return;
     }
-    const match = /^\/api\/v1\/mold\/sessions\/([^/]+)\/analyze$/.exec(path);
+    const match = /^\/api\/v1\/mold\/sessions\/([^/]+)\/(analyze|split)$/.exec(path);
     if (match) {
       requireMethod(req, ['POST']);
       const accountId = requireMoldUser(req, context);
@@ -747,7 +747,9 @@ async function handleTokcadMoldApi(
       if (!context.authLimiter.take(`mold-analyze:${accountId}`, MOLD_ANALYSES_PER_HOUR, MOLD_WINDOW_MS)) {
         throw new HttpError(429, 'RATE_LIMITED', 'That is a lot of molding checks for one hour. Try again later.');
       }
-      sendJson(req, res, 200, await mold.analyze(accountId, match[1]!, pull, cosmetic as Record<string, unknown>[]));
+      sendJson(req, res, 200, match[2] === 'split'
+        ? await mold.split(accountId, match[1]!, pull, cosmetic as Record<string, unknown>[])
+        : await mold.analyze(accountId, match[1]!, pull, cosmetic as Record<string, unknown>[]));
       return;
     }
     throw new HttpError(404, 'NOT_FOUND', 'Not found.');

@@ -77,6 +77,16 @@ export class MoldService {
     return this.#call('POST', `/api/mold/sessions/${session}/analyze`, owner, body, 'application/json', ANALYZE_TIMEOUT_MS);
   }
 
+  /** The mold split (cavity, core, parting surface) for the direction and show faces the user
+   *  is looking at: { report, step } with the STEP assembly in base64. */
+  async split(
+    owner: string, session: string, pull: [number, number, number] | null, cosmetic: Record<string, unknown>[] = [],
+  ): Promise<Record<string, unknown>> {
+    if (!isMoldSessionId(session)) throw new MoldServiceError(404, 'Unknown or expired molding check.');
+    const body = Buffer.from(JSON.stringify({ ...(pull ? { pull } : {}), ...(cosmetic.length ? { cosmetic } : {}) }));
+    return this.#call('POST', `/api/mold/sessions/${session}/split`, owner, body, 'application/json', ANALYZE_TIMEOUT_MS);
+  }
+
   async #call(
     method: string, path: string, owner: string, body: Buffer, contentType: string, timeoutMs: number,
   ): Promise<Record<string, unknown>> {

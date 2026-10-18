@@ -638,6 +638,7 @@ function summary(result) {
     const area = result.bodies.reduce((s, b) => s + (b.projectedAreaMm2 || 0), 0);
     blocks.push(el('p', {}, `Seen along the opening direction the part covers ${(area / 100).toFixed(1)} cm². ` +
       'That area, times the plastic\'s pressure, is the force the machine needs to keep the mold shut.'));
+    blocks.push(splitBlock(result));
   }
   return blocks;
 }
@@ -654,6 +655,73 @@ const REASONS = {
 function directionText(result) {
   const how = result.pull.inferred ? `worked out as ${REASONS[result.pull.reason] || 'the best fit'}: ` : '';
   return `Opening direction: ${how}${fmtVec(result.pull.vector)} (yellow arrow). The parting line is on the end the arrow points to.`;
+}
+
+// -- The mold split: cavity, core and parting surface, built by the service ----------------
+/** The parting line is flat when the main loop stays at one height along the pull: the only
+ *  kind the split builds so far. */
+function flatPartingLine(result) {
+  const loops = result.bodies.map((b) => b.partingLine).filter((l) => l && l.length > 2);
+  if (!loops.length) return false;
+  const loop = loops.reduce((a, b) => (b.length > a.length ? b : a));
+  const p = result.pull.vector;
+  const h = loop.map((q) => q[0] * p[0] + q[1] * p[1] + q[2] * p[2]);
+  return Math.max(...h) - Math.min(...h) <= Math.max(result.maxDim * 0.001, 0.01);
+}
+
+function splitBlock(result) {
+  if (!flatPartingLine(result)) {
+    return el('p', { class: 'tokcad-note' }, 'This part needs a stepped or shaped parting line. ' +
+      'Splitting the mold handles flat parting lines so far.');
+  }
+  return el('div', { class: 'tokcad-finding' },
+    el('p', {}, 'Build the mold from this check: a steel block 1.5 in larger than the part all round and 1 in beyond ' +
+      'each end, split at the parting line into the cavity and the core. It opens as a new assembly with the part in place.'),
+    el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', 'data-mold-split': '', disabled: state.busy, onclick: splitMold },
+      'Split the mold'));
+}
+
+async function splitMold() {
+  if (state.busy || !state.result || !state.session) return;
+  const name = (studio.document()?.name || 'part').replace(/[^\w .-]+/g, '').trim() || 'part';
+  state.busy = true;
+  state.error = false;
+  state.message = 'Building the mold (cavity, core and parting surface)…';
+  render();
+  try {
+    const out = await api(`/api/v1/mold/sessions/${state.session}/split`, {
+      body: JSON.stringify({ pull: state.result.pull.vector, ...(state.showFaces?.length ? { cosmetic: state.showFaces } : {}) }),
+      type: 'application/json',
+    });
+    const bytes = Uint8Array.from(atob(out.step), (c) => c.charCodeAt(0));
+    const file = new File([bytes], `${name} mold.step`, { type: 'application/step' });
+    const size = out.report.block.size.map((v) => Math.round(v)).join(' × ');
+    // Opening it is the studio's own STEP import; the start screen should not ask "what next?".
+    // Success is judged from the studio (a new model with the pieces in it), not from the call.
+    const before = studio.contentHash();
+    globalThis.__tokcadOpeningSplit = Date.now();
+    state.message = 'Opening the mold…';
+    render();
+    studio.openFile(file);
+    const opened = await new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (studio.contentHash() !== before && !studio.building() && studio.bodyMeshes().size >= 2) resolve(true);
+        else if (Date.now() - started > 90_000) resolve(false);
+        else setTimeout(tick, 500);
+      };
+      tick();
+    });
+    if (!opened) throw new Error('The mold was built, but TOK CAD could not open it. The message at the bottom of the window says why.');
+    state.message = `Opened "${name} mold": the part, the cavity and the core, in a ${size} mm block, ` +
+      'meeting at the parting line. Your part is still in Recover. Slides and lifters are not built yet.';
+  } catch (error) {
+    state.error = true;
+    state.message = String(error.message || error);
+  } finally {
+    state.busy = false;
+    render();
+  }
 }
 
 /** What became of the show faces, and a way to change them. */
@@ -787,7 +855,7 @@ function init(tokcadStudio) {
     run: () => { open(); if (!state.result) run(); },
   };
   globalThis.TokcadMold = {
-    open, close, run, fixDraft, state: () => state, findings: () => findings(state.result),
+    open, close, run, fixDraft, splitMold, state: () => state, findings: () => findings(state.result),
     // Name the show faces without clicking them (scripts and tests); [] for none.
     setShowFaces: (sigs) => { state.showFaces = sigs; state.showFacesProject = projectId(); state.asking = false; },
     draftOperations: () => draftOperations(state.result, findings(state.result).noDraft, studio.faces()),

@@ -295,6 +295,21 @@ with sync_playwright() as p:
     supports = pg.evaluate("() => [globalThis.TokcadChecks.supports('molded'), globalThis.TokcadChecks.supports('printed')]")
     check(supports == [True, False], f'the coach offers the molding check for molded parts only ({supports})')
 
+    # ── "Split the mold" on the box opened from the start page (before the hourly limit is used up): a new assembly with part, cavity and core ──
+    pg.click('#tokcad-mold [data-mold-view="halves"]')
+    check(pg.is_visible('#tokcad-mold [data-mold-split]'), 'split: the halves view offers "Split the mold" for a flat parting line')
+    before = pg.evaluate('() => globalThis.TokcadStudio.contentHash()')
+    pg.click('#tokcad-mold [data-mold-split]')
+    pg.wait_for_function('h => globalThis.TokcadStudio.contentHash() !== h && globalThis.TokcadStudio.bodyMeshes().size >= 3'
+                         ' && !globalThis.TokcadStudio.building()', arg=before, timeout=180000)
+    pg.wait_for_timeout(1500)
+    split = pg.evaluate('''() => ({ meshes: globalThis.TokcadStudio.bodyMeshes().size, msg: globalThis.TokcadMold.state().message,
+        name: globalThis.TokcadStudio.document().name, start: !!document.querySelector('.tokcad-start') })''')
+    check(split['meshes'] >= 3 and 'the cavity and the core' in split['msg'] and not split['start'],
+          f"split: the mold opens as an assembly with part, cavity and core, no \"what next?\" card ({split['meshes']} bodies, {split['name']})")
+    if SHOTS:
+        pg.screenshot(path=os.path.join(SHOTS, 'mold_split_box.png'))
+
     # ── the per-account limit ────────────────────────────────────────────────────────────
     codes = pg.evaluate("""async (base) => {
         const account = await (await fetch(base + 'api/v1/account')).json();
@@ -304,6 +319,7 @@ with sync_playwright() as p:
             const r = await fetch(base + 'api/v1/mold/sessions/' + session + '/analyze', {method: 'POST',
                 headers: {'content-type': 'application/json', 'x-partmode-csrf': account.csrfToken}, body: '{}'});
             out.push(r.status);
+            await r.body?.cancel();          // results are megabytes now: do not let a dozen pile up
             if (r.status === 429) break;
         }
         return out;
