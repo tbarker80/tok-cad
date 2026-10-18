@@ -70,6 +70,11 @@ def open_part(pg, name):
 def run_check(pg, timeout=180000):
     pg.evaluate('() => globalThis.TokcadMold.run()')
     pg.wait_for_function('() => !globalThis.TokcadMold.state().busy', timeout=timeout)
+    # The first check of a project asks for the show face (after the account check); these
+    # checks have none.
+    if pg.evaluate('() => globalThis.TokcadMold.state().asking'):
+        pg.click('#tokcad-mold [data-mold-show="none"]')
+        pg.wait_for_function('() => !globalThis.TokcadMold.state().busy && !globalThis.TokcadMold.state().asking', timeout=timeout)
     return pg.evaluate("""() => { const s = globalThis.TokcadMold.state();
         return { error: s.error, message: s.message, undercut: s.result?.undercut, pull: s.result?.pull,
                  wall: s.result?.wall }; }""")
@@ -171,6 +176,22 @@ with sync_playwright() as p:
         pg.wait_for_function('() => !globalThis.TokcadMold.state().busy', timeout=120000)
         flipped = pg.evaluate('() => globalThis.TokcadMold.state().result.pull.vector')
         check(flipped == [-c if c else 0 for c in v2['pull']], f'box: the flip re-runs with the opening direction reversed ({v2["pull"]} -> {flipped})')
+        # a show face: the box's bottom face, named as the user would pick it, turns the draw to it
+        bottom = pg.evaluate('''() => { const fs = globalThis.TokcadStudio.faces().filter((f) => f.sig.topologyKind === 'planar-face' && f.sig.n
+            && Math.abs(f.sig.n[2]) > 0.99); return fs.reduce((a, f) => (f.sig.p[2] < a.sig.p[2] ? f : a)).sig; }''')
+        pg.evaluate('(sig) => { globalThis.TokcadMold.setShowFaces([sig]); globalThis.TokcadMold.state().pull = "auto"; }', bottom)
+        r3 = run_check(pg)
+        sf = pg.evaluate('() => globalThis.TokcadMold.state().result.showFaces')
+        check(not r3['error'] and r3['pull']['reason'] == 'show-face' and r3['pull']['vector'][2] < 0 and sf and sf['found'] == 1,
+              f"box: a show face turns the draw so it faces the cavity ({r3['pull']['vector']}, {sf})")
+        check('Show face: 1 face you picked' in pg.inner_text('#tokcad-mold'), 'box: the panel says a show face is in use')
+        pg.click('#tokcad-mold [data-mold-show="change"]')
+        check(pg.is_visible('#tokcad-mold [data-mold-ask]'), 'box: "Change" asks for the show face again')
+        pg.click('#tokcad-mold [data-mold-show="use"]')
+        check('Select the show face on the part first' in pg.inner_text('#tokcad-mold'),
+              'box: "Use selected faces" with nothing selected says to click a face first')
+        pg.click('#tokcad-mold [data-mold-show="none"]')
+        pg.wait_for_function('() => !globalThis.TokcadMold.state().busy && !globalThis.TokcadMold.state().asking', timeout=180000)
         if SHOTS:
             pg.screenshot(path=os.path.join(SHOTS, 'mold_box_halves.png'))
         # a forced pull direction is sent and used
@@ -255,6 +276,11 @@ with sync_playwright() as p:
     before = pg.evaluate('() => globalThis.TokcadStudio.contentHash()')
     pg.set_input_files('[data-start-drop="molding"] input[type=file]', os.path.join(FIXTURES, 'box_test.step'))
     pg.wait_for_function('h => globalThis.TokcadStudio.contentHash() !== h', arg=before, timeout=120000)
+    pg.wait_for_function('() => { const s = globalThis.TokcadMold.state(); return s.asking || (!s.busy && s.result && s.sentHash === globalThis.TokcadStudio.contentHash()); }',
+                         timeout=180000)
+    asked = pg.evaluate('() => globalThis.TokcadMold.state().asking')
+    if asked:
+        pg.click('#tokcad-mold [data-mold-show="none"]')
     # wait for a result that belongs to THIS part: the panel may still hold an earlier part's
     pg.wait_for_function('''() => { const s = globalThis.TokcadMold.state();
         return s.open && !s.busy && ((s.result && s.sentHash === globalThis.TokcadStudio.contentHash()) || s.error); }''',

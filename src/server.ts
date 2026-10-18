@@ -738,10 +738,16 @@ async function handleTokcadMoldApi(
         }
         pull = p as [number, number, number];
       }
+      // Show faces: TOK CAD's own face signatures, at most 50; the service checks their fields.
+      const cosmetic = body.cosmetic === undefined || body.cosmetic === null ? [] : body.cosmetic;
+      if (!Array.isArray(cosmetic) || cosmetic.length > 50
+          || !cosmetic.every((sig) => sig && typeof sig === 'object' && !Array.isArray(sig))) {
+        throw new HttpError(400, 'COSMETIC_INVALID', 'Show faces must be a list of up to 50 faces.');
+      }
       if (!context.authLimiter.take(`mold-analyze:${accountId}`, MOLD_ANALYSES_PER_HOUR, MOLD_WINDOW_MS)) {
         throw new HttpError(429, 'RATE_LIMITED', 'That is a lot of molding checks for one hour. Try again later.');
       }
-      sendJson(req, res, 200, await mold.analyze(accountId, match[1]!, pull));
+      sendJson(req, res, 200, await mold.analyze(accountId, match[1]!, pull, cosmetic as Record<string, unknown>[]));
       return;
     }
     throw new HttpError(404, 'NOT_FOUND', 'Not found.');

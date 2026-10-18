@@ -67,10 +67,13 @@ export class MoldService {
     return { session: result.session };
   }
 
-  async analyze(owner: string, session: string, pull: [number, number, number] | null): Promise<Record<string, unknown>> {
+  async analyze(
+    owner: string, session: string, pull: [number, number, number] | null, cosmetic: Record<string, unknown>[] = [],
+  ): Promise<Record<string, unknown>> {
     if (!isMoldSessionId(session)) throw new MoldServiceError(404, 'Unknown or expired molding check.');
     // "v2": the service's split rules (opening direction, parting end, walls), which TOK CAD uses.
-    const body = Buffer.from(JSON.stringify(pull ? { pull, rules: 'v2' } : { rules: 'v2' }));
+    // "cosmetic": the faces the user said customers see; the service checks them in detail.
+    const body = Buffer.from(JSON.stringify({ rules: 'v2', ...(pull ? { pull } : {}), ...(cosmetic.length ? { cosmetic } : {}) }));
     return this.#call('POST', `/api/mold/sessions/${session}/analyze`, owner, body, 'application/json', ANALYZE_TIMEOUT_MS);
   }
 

@@ -53,6 +53,8 @@ let state = {
   pull: 'auto', view: 'draft', result: null, session: null, sentHash: null,
   account: null,        // { signedIn, verified, available, csrfToken }
   highlight: null,      // { body, face } shown by "Show me"
+  // Show faces (cosmetic) the user named for this project: null = not asked yet, [] = none.
+  showFaces: null, showFacesProject: null, asking: false, filterBefore: null,
 };
 let overlay = null;     // THREE.Group under the studio's partGroup
 
@@ -83,9 +85,44 @@ async function api(path, { body, type }) {
   return value;
 }
 
+// -- Show faces: asked once per project, before the first check ---------------------------
+function projectId() {
+  return studio.document()?.projectId || null;
+}
+
+function askShowFaces() {
+  state.open = true;
+  state.asking = true;
+  state.error = false;
+  state.message = '';
+  // Clicks pick faces while the question is open; the previous filter comes back after.
+  if (state.filterBefore === null) state.filterBefore = studio.setSelectionFilter('face');
+  render();
+}
+
+function answerShowFaces(useSelection) {
+  if (useSelection) {
+    const picked = studio.selectedFaces();
+    if (!picked.length) {
+      state.error = true;
+      state.message = 'Select the show face on the part first: click it in the 3D view (Ctrl+click to add more).';
+      render();
+      return;
+    }
+    state.showFaces = picked.map((f) => f.sig);
+  } else {
+    state.showFaces = [];
+  }
+  state.showFacesProject = projectId();
+  state.asking = false;
+  if (state.filterBefore !== null) { studio.setSelectionFilter(state.filterBefore); state.filterBefore = null; }
+  run();
+}
+
 async function run() {
   if (state.busy) return;
   state.open = true;
+  state.asking = false;
   state.busy = true;
   state.error = false;
   state.message = 'Checking your account…';
@@ -95,6 +132,13 @@ async function run() {
     if (!account.available) throw new Error('The molding check is not available on this server right now.');
     if (!account.signedIn) throw new Error('signin');
     if (!account.verified) throw new Error('Verify your email address (see the account page) to run the molding check.');
+    // The show face is the user's to say: ask before the first check of each project (after the
+    // account checks, so nobody is asked a question and then told to sign in).
+    if (state.showFaces === null || state.showFacesProject !== projectId()) {
+      state.busy = false;
+      askShowFaces();
+      return;
+    }
     const hash = studio.contentHash();
     // The service keeps the part for a session; send it again only when the model changed.
     if (!state.session || state.sentHash !== hash) {
@@ -109,7 +153,8 @@ async function run() {
     render();
     const pull = state.pull === 'custom' ? state.customPull : (PULLS[state.pull]?.vector || null);
     const result = await api(`/api/v1/mold/sessions/${state.session}/analyze`,
-      { body: JSON.stringify(pull ? { pull } : {}), type: 'application/json' });
+      { body: JSON.stringify({ ...(pull ? { pull } : {}), ...(state.showFaces.length ? { cosmetic: state.showFaces } : {}) }),
+        type: 'application/json' });
     if (studio.contentHash() !== hash) throw new Error('The model changed while it was being checked. Run the check again.');
     state.result = decode(result);
     state.highlight = null;
@@ -603,11 +648,45 @@ const REASONS = {
   'least-undercut': 'the direction with the fewest undercuts',
   'depth-capped': 'the direction with the fewest undercuts among those no deeper than the part is long',
   shallowest: 'the shallowest direction (every direction is deeper than the part is long)',
+  'show-face': 'the direction that puts your show face in the cavity',
 };
 
 function directionText(result) {
   const how = result.pull.inferred ? `worked out as ${REASONS[result.pull.reason] || 'the best fit'}: ` : '';
   return `Opening direction: ${how}${fmtVec(result.pull.vector)} (yellow arrow). The parting line is on the end the arrow points to.`;
+}
+
+/** What became of the show faces, and a way to change them. */
+function showFaceNote(result) {
+  const named = state.showFaces?.length || 0;
+  const rows = [];
+  const sf = result.showFaces;
+  if (named && sf) {
+    if (sf.found < sf.given) {
+      rows.push(el('p', { class: 'tokcad-note' }, `${plural(sf.given - sf.found, 'show face')} could not be found on the part sent for checking.`));
+    }
+    if (sf.found && sf.inCavity < 0.99) {
+      rows.push(el('p', { class: 'tokcad-note' }, `${Math.round((1 - sf.inCavity) * 100)}% of the show face is under an undercut: ` +
+        'the cavity cannot reach it, so forming it needs a slide or lifter.'));
+    }
+  }
+  return el('div', { class: 'tokcad-mold-show' },
+    el('p', { class: 'tokcad-hint' }, named ? `Show face: ${plural(named, 'face')} you picked, kept in the cavity. ` : 'No show face picked. ',
+      el('button', { type: 'button', class: 'tokcad-link', 'data-mold-show': 'change', disabled: state.busy,
+        onclick: () => { state.showFaces = null; askShowFaces(); } }, 'Change')),
+    ...rows);
+}
+
+function showFacePrompt() {
+  return el('div', { class: 'tokcad-finding', 'data-mold-ask': '' },
+    el('p', {}, el('b', {}, 'Which face do customers see?')),
+    el('p', {}, 'Click the show face on the part (Ctrl+click to add more), then press "Use selected faces". ' +
+      'It goes in the cavity, and the mold opens the way that face looks. If no face matters, the check decides.'),
+    el('div', { class: 'tokcad-actions' },
+      el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', 'data-mold-show': 'use', onclick: () => answerShowFaces(true) },
+        'Use selected faces'),
+      el('button', { type: 'button', class: 'tokcad-btn', 'data-mold-show': 'none', onclick: () => answerShowFaces(false) },
+        'No show face')));
 }
 
 /** A close call on which end takes the parting line: say so, and offer the other end. */
@@ -655,12 +734,14 @@ function render() {
         onclick: close }, '×')),
     el('div', { class: 'tokcad-mold-body' },
       el('label', { class: 'tokcad-mold-pull' }, el('span', {}, 'Mold opens along'), pullSelect),
-      el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', disabled: state.busy, onclick: run, 'data-mold-run': '' },
-        state.busy ? 'Checking…' : result ? 'Check again' : 'Run the check'),
+      state.asking ? showFacePrompt()
+        : el('button', { type: 'button', class: 'tokcad-btn tokcad-primary', disabled: state.busy, onclick: run, 'data-mold-run': '' },
+          state.busy ? 'Checking…' : result ? 'Check again' : 'Run the check'),
       message,
       result && !state.busy ? [
         stale ? el('p', { class: 'tokcad-note' }, 'The model has changed since this check. Run it again to update.') : null,
         el('p', { class: 'tokcad-hint' }, directionText(result)),
+        showFaceNote(result),
         endNote(result),
         el('div', { class: 'tokcad-mold-views', role: 'tablist' }, Object.entries(VIEWS).map(([id, label]) =>
           el('button', { type: 'button', role: 'tab', 'aria-selected': String(state.view === id), 'data-mold-view': id,
@@ -707,6 +788,8 @@ function init(tokcadStudio) {
   };
   globalThis.TokcadMold = {
     open, close, run, fixDraft, state: () => state, findings: () => findings(state.result),
+    // Name the show faces without clicking them (scripts and tests); [] for none.
+    setShowFaces: (sigs) => { state.showFaces = sigs; state.showFacesProject = projectId(); state.asking = false; },
     draftOperations: () => draftOperations(state.result, findings(state.result).noDraft, studio.faces()),
   };
   globalThis.dispatchEvent(new Event('tokcad:checks-ready'));

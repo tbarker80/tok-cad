@@ -25954,6 +25954,22 @@
         return { bodyId: item.owner.id, ref, sig: deepCopy(item.topologySignature), geometry: item.expectedGeometry };
       });
     },
+    // The faces selected in the 3D view, each with its body and geometric signature.
+    selectedFaces() {
+      return currentV6Selections()
+        .filter((entry) => entry?.owner?.kind === 'body' && entry?.topologySignature?.kind === 'face')
+        .map((entry) => {
+          const sig = deepCopy(entry.topologySignature);
+          delete sig.kind;
+          return { bodyId: entry.owner.id, sig };
+        });
+    },
+    // What a click in the 3D view picks ('auto', 'face', ...); returns the previous filter.
+    setSelectionFilter(value) {
+      const previous = selectionFilter;
+      setStudioSelectionFilter(value);
+      return previous;
+    },
     // Apply typed operations as one undoable step, as the studio's own dialogs do: check the
     // result with the kernel first, so a failing feature never lands in the history.
     async applyOperations(label, operations) {
