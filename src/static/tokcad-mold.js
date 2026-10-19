@@ -690,7 +690,19 @@ function slideList() {
     el('ul', {}, slides.map((sl) => el('li', {},
       el('b', {}, sl.name), `: moves ${fmtVec(sl.direction)}, stroke ${sl.stroke.toFixed(1)} mm `,
       `(undercut ${sl.depth.toFixed(1)} mm + 2 mm), face ${sl.face.map((v) => v.toFixed(0)).join(' × ')} mm. `,
-      sl.unit.text))));
+      sl.unit.text, ' ', draftLine(sl.draft)))));
+}
+
+/** The slide's draft check: every face it forms, against its pull. */
+function draftLine(draft) {
+  if (!draft) return null;
+  if (!draft.ok) {
+    return el('span', { class: 'tokcad-error' }, `Draft check: ${draft.negativeArea.toFixed(0)} mm² of the faces it forms lean back ` +
+      `against its pull (worst ${draft.minDraftDeg.toFixed(1)}°), so it would lock or drag. Add draft to those faces.`);
+  }
+  return el('span', { class: 'tokcad-hint' }, 'Draft check: every face it forms releases as it pulls away' +
+    (draft.zeroDraftArea > 0.5 ? ` (${draft.zeroDraftArea.toFixed(0)} mm² runs straight along its pull: no draft, it will wear)` : '') +
+    (draft.trimmed ? '; steel behind the part that would have locked it was left in the mold.' : '.'));
 }
 
 async function splitMold() {

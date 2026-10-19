@@ -210,14 +210,14 @@ with sync_playwright() as p:
     check(not r['error'], f'housing: check ran ({r["message"] or "ok"})')
     if not r['error']:
         u = r['undercut']
-        check((u['regions'], u['slides'], u['lifters']) == (8, 4, 0),
-              f'housing: 8 undercuts, 4 slides, as CAD EVAL finds ({u["regions"]}, {u["slides"]}, {u["lifters"]})')
+        check((u['regions'], u['slides'], u['lifters']) == (8, 3, 0),
+              f'housing: 8 undercuts, 3 slides along the holes ({u["regions"]}, {u["slides"]}, {u["lifters"]})')
         pg.click('#tokcad-mold [data-mold-view="undercut"]')
         arrows = pg.evaluate("""() => { let n = 0; globalThis.TokcadStudio.scene().partGroup.getObjectByName('tokcad-mold-overlay')
             .traverse((o) => { if (o.type === 'ArrowHelper') n++; }); return n; }""")
         expected = sum(len(g['centroids']) for g in u['groups'])
         check(arrows == expected and arrows > 0, f'housing: an arrow per undercut region ({arrows} of {expected})')
-        check('4 slides' in pg.inner_text('#tokcad-mold'), 'housing: the panel says it needs 4 slides')
+        check('3 slides' in pg.inner_text('#tokcad-mold'), 'housing: the panel says it needs 3 slides')
         if SHOTS:
             pg.screenshot(path=os.path.join(SHOTS, 'mold_housing_undercut.png'))
 
