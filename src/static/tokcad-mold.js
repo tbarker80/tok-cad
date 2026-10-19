@@ -684,8 +684,14 @@ function splitBlock(result) {
 /** The slides the last split built: direction, stroke and a suggested unit to confirm. */
 function slideList() {
   const slides = state.splitSlides;
-  if (!slides || !slides.length || state.error) return null;
-  return el('div', { class: 'tokcad-finding', 'data-mold-slides': '' },
+  const trapped = state.splitTrapped || [];
+  if (state.error || (!slides?.length && !trapped.length)) return null;
+  const warnings = trapped.map((t) => el('p', { class: 'tokcad-error', 'data-mold-trapped': '' },
+    `${t.name} (${t.volume.toFixed(0)} mm³ in the ${t.half} half${t.nearSlide ? `, next to ${t.nearSlide}` : ''}): ` +
+    `steel no half can hold. The ${t.half} cannot reach it, and ${t.nearSlide || 'a slide'} would lock on it. ` +
+    'It needs a lifter or a change to the part there. It is shown as its own body.'));
+  if (!slides?.length) return el('div', { class: 'tokcad-finding' }, ...warnings);
+  return el('div', { class: 'tokcad-finding', 'data-mold-slides': '' }, ...warnings,
     el('p', {}, el('b', {}, 'Slides'), ' (suggestions to confirm; lifters are not built yet)'),
     el('ul', {}, slides.map((sl) => el('li', {},
       el('b', {}, sl.name), `: moves ${fmtVec(sl.direction)}, stroke ${sl.stroke.toFixed(1)} mm `,
@@ -711,6 +717,7 @@ async function splitMold() {
   state.busy = true;
   state.error = false;
   state.splitSlides = null;
+  state.splitTrapped = null;
   state.message = 'Building the mold (cavity, core, slides)…';
   render();
   try {
@@ -744,6 +751,7 @@ async function splitMold() {
       `, in a ${size} mm block, meeting at the parting line. Your part is still in Recover.` +
       (slides.length ? '' : ' Lifters are not built yet.');
     state.splitSlides = slides;
+    state.splitTrapped = out.report.trapped || [];
   } catch (error) {
     state.error = true;
     state.message = String(error.message || error);
