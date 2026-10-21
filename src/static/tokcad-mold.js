@@ -731,20 +731,22 @@ async function splitMold() {
     // Opening it is the studio's own STEP import; the start screen should not ask "what next?".
     // Success is judged from the studio (a new model with the pieces in it), not from the call.
     const before = studio.contentHash();
-    globalThis.__tokcadOpeningSplit = Date.now();
+    const asked = Date.now();
+    globalThis.__tokcadOpeningSplit = asked;
     state.message = 'Opening the mold…';
     render();
     studio.openFile(file);
     const opened = await new Promise((resolve) => {
-      const started = Date.now();
       const tick = () => {
-        if (studio.contentHash() !== before && !studio.building() && studio.bodyMeshes().size >= 2) resolve(true);
-        else if (Date.now() - started > 90_000) resolve(false);
+        const refused = studio.importError?.();
+        if (refused && refused.at >= asked) resolve(refused.message);
+        else if (studio.contentHash() !== before && !studio.building() && studio.bodyMeshes().size >= 2) resolve(true);
+        else if (Date.now() - asked > 90_000) resolve('The message at the bottom of the window says why.');
         else setTimeout(tick, 500);
       };
       tick();
     });
-    if (!opened) throw new Error('The mold was built, but TOK CAD could not open it. The message at the bottom of the window says why.');
+    if (opened !== true) throw new Error(`The mold was built, but TOK CAD could not open it. ${opened}`);
     const slides = out.report.slides || [];
     state.message = `Opened "${name} mold": the part, the cavity and the core` +
       (slides.length ? ` and ${plural(slides.length, 'slide')}` : '') +

@@ -17785,7 +17785,10 @@
     try {
       imported = await prepareImportedProject(new Uint8Array(await file.arrayBuffer()), format, file.name);
     } catch (error) {
-      return say((format === 'step' ? 'Could not import STEP: ' : 'Could not open project: ') + String(error?.message || error));
+      const message = (format === 'step' ? 'Could not import STEP: ' : 'Could not open project: ') + String(error?.message || error);
+      tokcadImportError = { at: Date.now(), message };   // TOKCAD: the molding split waits on this import
+      tokcadEmit('import-failed');
+      return say(message);
     }
     // Replacing the document while an editor is open must go through the
     // coordinator: prompt for a dirty draft, cancel editors, then switch
@@ -25906,6 +25909,7 @@
   // never duplicate studio logic. Events: 'change' (document committed) and 'meshes'
   // (kernel geometry rebuilt). Listeners live on globalThis because the studio emits
   // during start-up, before execution reaches this block.
+  let tokcadImportError = null;
   function tokcadEmit(kind) {
     for (const listener of globalThis.__tokcadListeners || []) {
       try { listener(kind); } catch (error) { console.error('TOK CAD listener failed', error); }
@@ -25942,6 +25946,8 @@
       input.dispatchEvent(new Event('change'));
     },
     bodyMeshes: () => new Map(bodyMeshes),
+    // The last file the studio refused to open: { at, message }, or null.
+    importError: () => (tokcadImportError ? { ...tokcadImportError } : null),
     scene: () => ({ THREE, partGroup }),
     requestRender: () => requestSceneRender(),   // after adding or changing scene objects
     building: () => latestAppliedRevision < latestRequestedRevision || mode.kind === 'rebuilding',
